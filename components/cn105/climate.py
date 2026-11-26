@@ -155,6 +155,10 @@ CONF_TEMPERATURE_MARGIN = "temperature_margin"
 CONF_POWER_UNIT_IS_BTU = "power_unit_is_btu"
 CONF_REPORT_WHEN_IDLE = "report_when_idle"
 
+CONF_DEFROST_SENSOR = "defrost_sensor"
+CONF_CUSTOM_FAN_MODE = "custom_fan_mode"
+DEFAULT_CUSTOM_FAN_MODES = ["FULL"]
+
 # Support explicite du DUAL setpoint via YAML
 CONF_DUAL_SETPOINT = "dual_setpoint"
 CONF_RESTORE_SETPOINTS = "restore_setpoints"
@@ -570,6 +574,11 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_AIRFLOW_CONTROL_SELECT): SELECT_SCHEMA,
             cv.Optional(CONF_AIR_PURIFIER_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
             cv.Optional(CONF_NIGHT_MODE_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
+            cv.Optional(CONF_DEFROST_SENSOR): binary_sensor.binary_sensor_schema(
+                binary_sensor.BinarySensor,
+                icon="mdi:snowflake-melt",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(CONF_CIRCULATOR_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
             cv.Optional(CONF_HARDWARE_SETTINGS): HARDWARE_SETTING_SCHEMA,
             cv.Optional(
@@ -586,6 +595,9 @@ CONFIG_SCHEMA = (
                     cv.Optional(
                         CONF_FAN_MODE
                     ): cv.ensure_list(climate.validate_climate_fan_mode),
+                    cv.Optional(
+                        CONF_CUSTOM_FAN_MODE, default=DEFAULT_CUSTOM_FAN_MODES
+                    ): cv.ensure_list(cv.string),
                     cv.Optional(
                         CONF_SWING_MODE
                     ): cv.ensure_list(climate.validate_climate_swing_mode),
@@ -698,6 +710,10 @@ def to_code(config):
                         climate.CLIMATE_FAN_MODES[fan_mode_str]
                     )
                 )
+        if not config[CONF_LOSSNAY]:
+            custom_fans = supports.get(CONF_CUSTOM_FAN_MODE, DEFAULT_CUSTOM_FAN_MODES)
+            if custom_fans:
+                cg.add(var.set_supported_custom_fan_modes_config(list(custom_fans)))
         for swing_mode_str in supports.get(
             CONF_SWING_MODE,
             [] if config[CONF_LOSSNAY] else DEFAULT_SWING_MODES,
@@ -834,6 +850,10 @@ def to_code(config):
     if CONF_NIGHT_MODE_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_NIGHT_MODE_SWITCH])
         cg.add(var.set_night_mode_switch(switch_var))
+
+    if CONF_DEFROST_SENSOR in config:
+        sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_DEFROST_SENSOR])
+        cg.add(var.set_defrost_sensor(sensor_var))
 
     if CONF_CIRCULATOR_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_CIRCULATOR_SWITCH])

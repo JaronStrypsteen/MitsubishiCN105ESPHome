@@ -265,6 +265,12 @@ bool HeatPumpProfile::decode_submode() {
         if (hp_.Sub_mode_sensor_ != nullptr) {
             hp_.Sub_mode_sensor_->publish_state(receivedSettings.sub_mode);
         }
+        if (hp_.defrost_sensor_ != nullptr && receivedSettings.sub_mode != nullptr) {
+            const bool is_defrost = (strcmp(receivedSettings.sub_mode, "DEFROST") == 0);
+            if (!hp_.defrost_sensor_->has_state() || hp_.defrost_sensor_->state != is_defrost) {
+                hp_.defrost_sensor_->publish_state(is_defrost);
+            }
+        }
         // The 0x09 sub-mode can change independently of the normal status packet.
         // Ask the driver to publish the refreshed action even without a sub-mode sensor.
         climate_changed = true;

@@ -297,3 +297,7 @@ void CN105Climate::add_hardware_setting(HardwareSettingSelect* setting) {
         this->isSetFunctions_ = true;
         });
 }
+
+void CN105Climate::set_defrost_sensor(binary_sensor::BinarySensor* sensor) {
+    this->defrost_sensor_ = sensor;
+}

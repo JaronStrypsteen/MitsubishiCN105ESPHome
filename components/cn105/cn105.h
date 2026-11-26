@@ -141,6 +141,13 @@ namespace esphome {
         HVACOptionSwitch* air_purifier_switch_ = nullptr;
         HVACOptionSwitch* night_mode_switch_ = nullptr;
         HVACOptionSwitch* circulator_switch_ = nullptr;
+        binary_sensor::BinarySensor* defrost_sensor_{ nullptr };
+        bool boost_active_{ false };
+        float pre_boost_target_temperature_{ NAN };
+        std::string pre_boost_fan_mode_{ "" };
+        climate::ClimateFanMode pre_boost_std_fan_mode_{ climate::CLIMATE_FAN_AUTO };
+        bool pre_boost_had_custom_fan_{ false };
+        std::vector<std::string> custom_fan_modes_storage_;
         std::vector<HardwareSettingSelect*> hardware_settings_;
         uint32_t hardware_settings_interval_ms_{ 86400000 };  // Default 24h
         bool compressor_frequency_report_when_idle_{ false };
@@ -273,6 +280,10 @@ namespace esphome {
         void setTargetTemperatureHigh(float temperature);
         void setCurrentTemperature(float temperature);
 
+        void set_defrost_sensor(binary_sensor::BinarySensor* sensor);
+        void set_supported_custom_fan_modes_config(const std::vector<std::string>& modes);
+        bool processPresetChange(const esphome::climate::ClimateCall& call);
+        void change_preset_(climate::ClimatePreset preset);
         void controlFan();
         void controlSwing();
         void set_custom_fan_mode(const char* mode);

@@ -57,6 +57,10 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
 
     if (!lossnay) {
         this->set_supported_custom_fan_modes({"FULL"});
+        this->traits_.add_supported_preset(climate::CLIMATE_PRESET_NONE);
+        this->traits_.add_supported_preset(climate::CLIMATE_PRESET_BOOST);
+        this->traits_.add_supported_preset(climate::CLIMATE_PRESET_SLEEP);
+        this->traits_.add_supported_preset(climate::CLIMATE_PRESET_ECO);
     }
 
 

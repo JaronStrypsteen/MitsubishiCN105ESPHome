@@ -376,6 +376,13 @@ int CN105Climate::lookupByteMapValue(const int valuesMap[], const uint8_t byteMa
  *
 */
 void CN105Climate::emulateMutex(const char* retryName, std::function<void()>&& f) {
+    if (!this->wantedSettingsMutex) {
+        this->wantedSettingsMutex = true;
+        ESP_LOGD(retryName, "emulateMutex direct lock acquired");
+        f();
+        this->wantedSettingsMutex = false;
+        return;
+    }
     auto callback = std::make_shared<std::function<void()>>(std::move(f));
     auto retry = std::make_shared<std::function<void(uint8_t, uint32_t)>>();
     std::weak_ptr<std::function<void(uint8_t, uint32_t)>> weak_retry = retry;
@@ -388,7 +395,7 @@ void CN105Climate::emulateMutex(const char* retryName, std::function<void()>&& f
                 this->wantedSettingsMutex = false;
                 return;
             }
-            ESP_LOGI(retryName, "wantedSettingsMutex is already locked, defferring...");
+            ESP_LOGI(retryName, "wantedSettingsMutex is already locked, deferring...");
             const uint32_t next_delay_ms = static_cast<uint32_t>(delay_ms * 1.2f);
             if (auto retry = weak_retry.lock()) {
                 this->set_timeout(retryName, delay_ms, [retry, retry_count, next_delay_ms]() {

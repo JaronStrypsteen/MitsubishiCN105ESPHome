@@ -70,6 +70,7 @@ void CN105Climate::controlDelegate(const esphome::climate::ClimateCall& call) {
 
     updated = this->processModeChange(call) || updated;
     updated = this->processTemperatureChange(call) || updated;
+    updated = this->processPresetChange(call) || updated;
     updated = this->processFanChange(call) || updated;
     updated = this->processSwingChange(call) || updated;
 
@@ -292,4 +293,96 @@ std::string CN105Climate::get_custom_fan_mode_str() const {
         return std::string(Climate::get_custom_fan_mode());
     }
     return "";
+}
+
+void CN105Climate::set_supported_custom_fan_modes_config(const std::vector<std::string>& modes) {
+    this->custom_fan_modes_storage_ = modes;
+    std::vector<const char*> c_modes;
+    c_modes.reserve(this->custom_fan_modes_storage_.size());
+    for (const auto& m : this->custom_fan_modes_storage_) {
+        c_modes.push_back(m.c_str());
+    }
+    this->set_supported_custom_fan_modes(c_modes);
+}
+
+bool CN105Climate::processPresetChange(const esphome::climate::ClimateCall& call) {
+    if (!call.get_preset().has_value()) {
+        return false;
+    }
+    const climate::ClimatePreset new_preset = *call.get_preset();
+    ESP_LOGD("control", "Preset change asked: %i", static_cast<int>(new_preset));
+    this->change_preset_(new_preset);
+    return true;
+}
+
+void CN105Climate::change_preset_(climate::ClimatePreset preset) {
+    this->preset = preset;
+
+    if (preset == climate::CLIMATE_PRESET_BOOST) {
+        if (!this->boost_active_) {
+            this->boost_active_ = true;
+            this->pre_boost_target_temperature_ = this->target_temperature;
+            this->pre_boost_had_custom_fan_ = this->has_custom_fan_mode();
+            if (this->pre_boost_had_custom_fan_) {
+                this->pre_boost_fan_mode_ = this->get_custom_fan_mode_str();
+            } else if (this->fan_mode.has_value()) {
+                this->pre_boost_std_fan_mode_ = this->fan_mode.value();
+            }
+        }
+        ESP_LOGI("preset", "Activating BOOST mode (15 min Super High fan)...");
+        this->set_custom_fan_mode("FULL");
+        this->fan_mode.reset();
+        this->setFanSpeed("4");
+
+        // 15-minute boost timeout (900000 ms)
+        this->set_timeout("cn105_boost_timer", 15 * 60 * 1000, [this]() {
+            ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
+            this->boost_active_ = false;
+            this->preset = climate::CLIMATE_PRESET_NONE;
+            if (this->pre_boost_had_custom_fan_ && !this->pre_boost_fan_mode_.empty()) {
+                this->set_custom_fan_mode(this->pre_boost_fan_mode_.c_str());
+                this->setFanSpeed("4");
+            } else {
+                this->clear_custom_fan_mode();
+                this->fan_mode = this->pre_boost_std_fan_mode_;
+                this->controlFan();
+            }
+            if (!std::isnan(this->pre_boost_target_temperature_)) {
+                this->setTargetTemperature(this->pre_boost_target_temperature_);
+                this->controlTemperature();
+            }
+            this->publish_state();
+        });
+    } else {
+        if (this->boost_active_) {
+            this->boost_active_ = false;
+            this->cancel_timeout("cn105_boost_timer");
+        }
+
+        if (preset == climate::CLIMATE_PRESET_SLEEP) {
+            ESP_LOGI("preset", "Activating SLEEP mode (Quiet fan + Night Mode)");
+            this->clear_custom_fan_mode();
+            this->fan_mode = climate::CLIMATE_FAN_QUIET;
+            this->controlFan();
+            if (this->night_mode_switch_ != nullptr) {
+                this->wantedRunStates.night_mode = 1;
+                this->night_mode_switch_->publish_state(true);
+            }
+        } else if (preset == climate::CLIMATE_PRESET_ECO) {
+            ESP_LOGI("preset", "Activating ECO mode");
+            this->clear_custom_fan_mode();
+            this->fan_mode = climate::CLIMATE_FAN_LOW;
+            this->controlFan();
+            if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
+                this->wantedRunStates.night_mode = 0;
+                this->night_mode_switch_->publish_state(false);
+            }
+        } else if (preset == climate::CLIMATE_PRESET_NONE) {
+            ESP_LOGI("preset", "Clearing preset");
+            if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
+                this->wantedRunStates.night_mode = 0;
+                this->night_mode_switch_->publish_state(false);
+            }
+        }
+    }
 }
