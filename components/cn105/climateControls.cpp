@@ -101,21 +101,18 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
 }
 
 bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
-    if (call.get_custom_fan_mode().has_value()) {
-        const std::string custom_mode = *call.get_custom_fan_mode();
-        if (custom_mode == "FULL") {
-            ESP_LOGD("control", "Custom fan mode FULL asked");
-            this->custom_fan_mode = "FULL";
-            this->fan_mode.reset();
-            this->setFanSpeed("4");
-            return true;
-        }
+    if (call.get_custom_fan_mode() == "FULL") {
+        ESP_LOGD("control", "Custom fan mode FULL asked");
+        this->set_custom_fan_mode("FULL");
+        this->fan_mode.reset();
+        this->setFanSpeed("4");
+        return true;
     }
     if (!call.get_fan_mode().has_value()) {
         return false;
     }
     ESP_LOGD("control", "Fan change asked");
-    this->custom_fan_mode.reset();
+    this->clear_custom_fan_mode();
     this->fan_mode = *call.get_fan_mode();
     this->controlFan();
     return true;
@@ -272,4 +269,27 @@ void CN105Climate::restore_setpoint_state_() {
 
 void CN105Climate::save_setpoint_state_() {
     this->profile_->save_setpoints();
+}
+
+void CN105Climate::set_custom_fan_mode(const char* mode) {
+    if (mode == nullptr) {
+        this->clear_custom_fan_mode_();
+    } else {
+        this->set_custom_fan_mode_(mode);
+    }
+}
+
+void CN105Climate::clear_custom_fan_mode() {
+    this->clear_custom_fan_mode_();
+}
+
+bool CN105Climate::has_custom_fan_mode() const {
+    return Climate::has_custom_fan_mode();
+}
+
+std::string CN105Climate::get_custom_fan_mode_str() const {
+    if (this->has_custom_fan_mode()) {
+        return std::string(Climate::get_custom_fan_mode());
+    }
+    return "";
 }

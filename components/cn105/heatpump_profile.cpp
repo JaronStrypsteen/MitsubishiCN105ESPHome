@@ -1084,8 +1084,8 @@ void HeatPumpProfile::encode_run_states(uint8_t* packet) {
 
 
 void HeatPumpProfile::control_fan() {
-    if (hp_.custom_fan_mode.has_value()) {
-        if (hp_.custom_fan_mode.value() == "FULL") {
+    if (hp_.has_custom_fan_mode()) {
+        if (hp_.get_custom_fan_mode_str() == "FULL") {
             hp_.setFanSpeed("4");
             return;
         }
@@ -1137,27 +1137,27 @@ void HeatPumpProfile::reconcile_fan(heatpumpSettings& settings, bool updateCurre
 
         if (strcmp(settings.fan, "QUIET") == 0) {
             hp_.fan_mode = climate::CLIMATE_FAN_QUIET;
-            hp_.custom_fan_mode.reset();
+            hp_.clear_custom_fan_mode();
         } else if (strcmp(settings.fan, "1") == 0) {
             hp_.fan_mode = climate::CLIMATE_FAN_LOW;
-            hp_.custom_fan_mode.reset();
+            hp_.clear_custom_fan_mode();
         } else if (strcmp(settings.fan, "2") == 0) {
             hp_.fan_mode = climate::CLIMATE_FAN_MEDIUM;
-            hp_.custom_fan_mode.reset();
+            hp_.clear_custom_fan_mode();
         } else if (strcmp(settings.fan, "3") == 0) {
             hp_.fan_mode = climate::CLIMATE_FAN_HIGH;
-            hp_.custom_fan_mode.reset();
+            hp_.clear_custom_fan_mode();
         } else if (strcmp(settings.fan, "4") == 0) {
             hp_.fan_mode.reset();
-            hp_.custom_fan_mode = "FULL";
+            hp_.set_custom_fan_mode("FULL");
         } else { //case "AUTO" or default:
             hp_.fan_mode = climate::CLIMATE_FAN_AUTO;
-            hp_.custom_fan_mode.reset();
+            hp_.clear_custom_fan_mode();
         }
         if (hp_.fan_mode.has_value()) {
             ESP_LOGD(TAG, "Fan mode is: %i", static_cast<int>(hp_.fan_mode.value()));
-        } else if (hp_.custom_fan_mode.has_value()) {
-            ESP_LOGD(TAG, "Custom fan mode is: %s", hp_.custom_fan_mode.value().c_str());
+        } else if (hp_.has_custom_fan_mode()) {
+            ESP_LOGD(TAG, "Custom fan mode is: %s", hp_.get_custom_fan_mode_str().c_str());
         } else {
             ESP_LOGD(TAG, "Fan mode is not set");
         }

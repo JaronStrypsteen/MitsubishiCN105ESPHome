@@ -22,7 +22,7 @@ void CN105Climate::setup() {
     this->target_temperature_low = NAN;
     this->target_temperature_high = NAN;
     this->fan_mode = climate::CLIMATE_FAN_OFF;
-    this->custom_fan_mode.reset();
+    this->clear_custom_fan_mode();
     this->swing_mode = climate::CLIMATE_SWING_OFF;
     this->parser_.reset();
     this->lastResponseMs = CUSTOM_MILLIS;

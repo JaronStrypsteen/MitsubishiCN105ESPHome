@@ -275,6 +275,10 @@ namespace esphome {
 
         void controlFan();
         void controlSwing();
+        void set_custom_fan_mode(const char* mode);
+        void clear_custom_fan_mode();
+        bool has_custom_fan_mode() const;
+        std::string get_custom_fan_mode_str() const;
         // Bootstrap connexion CN105 en loop() (évite de perdre les tout premiers logs OTA)
         void maybe_start_connection_();
 

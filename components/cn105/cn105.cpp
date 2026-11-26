@@ -56,7 +56,7 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
     this->traits_.set_visual_temperature_step(ESPMHP_TEMPERATURE_STEP);
 
     if (!lossnay) {
-        this->traits_.set_supported_custom_fan_modes({"FULL"});
+        this->set_supported_custom_fan_modes({"FULL"});
     }
 
 
