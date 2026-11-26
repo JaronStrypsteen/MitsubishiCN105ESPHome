@@ -120,7 +120,9 @@ def _keepalive_interval(value):
 
 def _custom_fan_modes(value):
     """Only FULL is implemented, and BOOST depends on it being advertised."""
-    value = cv.ensure_list(cv.In(DEFAULT_CUSTOM_FAN_MODES))(value)
+    # cv.In was removed from esphome.config_validation in ESPHome 2026.11;
+    # cv.one_of is available across all supported versions (2025.11+).
+    value = cv.ensure_list(cv.one_of(*DEFAULT_CUSTOM_FAN_MODES))(value)
     if "FULL" not in value:
         raise cv.Invalid("supports.custom_fan_mode must include FULL (currently the only implemented custom fan mode)")
     return value
