@@ -263,12 +263,14 @@ struct heatpumpRunStates {
     int8_t air_purifier = -1;
     int8_t night_mode = -1;
     int8_t circulator = -1;
+    int8_t power_saving = -1;
     const char* airflow_control = nullptr;
 
     void resetSettings() {
         air_purifier = -1;
         night_mode = -1;
         circulator = -1;
+        power_saving = -1;
         airflow_control = nullptr;
     }
 
@@ -279,6 +281,7 @@ struct heatpumpRunStates {
         return air_purifier == other.air_purifier &&
             night_mode == other.night_mode &&
             circulator == other.circulator &&
+            power_saving == other.power_saving &&
             airflow_control == other.airflow_control;
     }
 

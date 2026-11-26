@@ -24,6 +24,12 @@ void CN105Climate::setup() {
     this->fan_mode = climate::CLIMATE_FAN_OFF;
     this->clear_custom_fan_mode();
     this->swing_mode = climate::CLIMATE_SWING_OFF;
+    if (this->coil_drying_switch_ != nullptr) {
+        this->coil_drying_switch_->publish_state(this->coil_drying_enabled_);
+    }
+    if (this->coil_drying_sensor_ != nullptr) {
+        this->coil_drying_sensor_->publish_state(false);
+    }
     this->parser_.reset();
     this->lastResponseMs = CUSTOM_MILLIS;
 

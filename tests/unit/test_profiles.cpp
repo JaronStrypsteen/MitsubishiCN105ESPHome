@@ -59,6 +59,8 @@ TEST(HeatPumpProfile, OperatingAndStageFallback) {
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, false, "HIGH", CLIMATE_ACTION_HEATING), CLIMATE_ACTION_IDLE);
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, true, "IDLE", CLIMATE_ACTION_COOLING), CLIMATE_ACTION_IDLE);
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, true, nullptr, CLIMATE_ACTION_COOLING), CLIMATE_ACTION_IDLE);
+    EXPECT_EQ(HeatPumpProtocol::operating_action(true, false, nullptr, CLIMATE_ACTION_HEATING, 0.0f), CLIMATE_ACTION_IDLE);
+    EXPECT_EQ(HeatPumpProtocol::operating_action(true, false, nullptr, CLIMATE_ACTION_HEATING, 28.0f), CLIMATE_ACTION_HEATING);
 }
 
 TEST(HeatPumpProfile, EncodingBRemainsLatchedThroughEncodingAFallback) {
@@ -605,6 +607,20 @@ TEST(HeatPumpProfile, FunctionEqualityComparesOnlyTheStoredBytes) {
     EXPECT_TRUE(first == second);
     EXPECT_TRUE(second.setValue(101, 2));
     EXPECT_TRUE(first != second);
+}
+
+TEST(HeatPumpProfile, PowerSavingRunStateWriteSetsControlMask) {
+    heatpumpRunStates current{};
+    current.power_saving = 0;
+    wantedHeatpumpRunStates wanted{};
+    wanted.power_saving = 1;
+    uint8_t packet[22]{};
+    HeatPumpProtocol::encode_run_states(packet, wanted, current);
+    EXPECT_EQ(packet[5], 8);
+    EXPECT_EQ(packet[6], 0x08);
+    EXPECT_EQ(packet[10], 0x0A);
+    auto optimistic = HeatPumpProtocol::optimistic_run_states(wanted, current);
+    EXPECT_EQ(optimistic.power_saving, 1);
 }
 
 TEST(HeatPumpProfile, RunStateWritesUseMasksAndPreserveMissingFields) {

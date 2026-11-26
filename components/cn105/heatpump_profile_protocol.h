@@ -117,6 +117,7 @@ struct HeatPumpProtocol {
         if (wanted.air_purifier > -1) states.air_purifier = wanted.air_purifier;
         if (wanted.night_mode > -1) states.night_mode = wanted.night_mode;
         if (wanted.circulator > -1) states.circulator = wanted.circulator;
+        if (wanted.power_saving > -1) states.power_saving = wanted.power_saving;
         return states;
     }
     static void encode_run_states(uint8_t* packet, const wantedHeatpumpRunStates& wanted, const heatpumpRunStates& current) {
@@ -124,6 +125,9 @@ struct HeatPumpProtocol {
         if (wanted.airflow_control != nullptr) {
             const int index = cn105_protocol::lookup_index(AIRFLOW_CONTROL_MAP, 3, wanted.airflow_control);
             if (index >= 0) { packet[11] = AIRFLOW_CONTROL[index]; packet[6] |= RUN_STATE_PACKET_1[4]; }
+        }
+        if (wanted.power_saving > -1 && wanted.power_saving != current.power_saving) {
+            packet[10] = wanted.power_saving ? 0x0A : 0x00; packet[6] |= 0x08;
         }
         if (wanted.air_purifier > -1 && static_cast<bool>(wanted.air_purifier) != current.air_purifier) {
             packet[17] = wanted.air_purifier ? 1 : 0; packet[7] |= RUN_STATE_PACKET_2[1];
@@ -243,7 +247,15 @@ struct HeatPumpProtocol {
         return report_when_idle || data[4] > 0 ? data[3] : 0;
     }
     static climate::ClimateAction operating_action(bool operating, bool use_stage, const char* stage,
-                                                    climate::ClimateAction active_action) {
+                                                    climate::ClimateAction active_action,
+                                                    float compressor_freq = NAN) {
+        if (!std::isnan(compressor_freq) && compressor_freq == 0.0f) {
+            return climate::CLIMATE_ACTION_IDLE;
+        }
+        const bool stage_idle = use_stage && stage != nullptr && std::strcmp(stage, STAGE_MAP[0]) == 0;
+        if (stage_idle) {
+            return climate::CLIMATE_ACTION_IDLE;
+        }
         const bool stage_active = use_stage && stage != nullptr && std::strcmp(stage, STAGE_MAP[0]) != 0;
         return operating || stage_active ? active_action : climate::CLIMATE_ACTION_IDLE;
     }

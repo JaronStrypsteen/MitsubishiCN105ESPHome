@@ -88,6 +88,9 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
     this->air_purifier_switch_ = nullptr;
     this->night_mode_switch_ = nullptr;
     this->circulator_switch_ = nullptr;
+    this->power_saving_switch_ = nullptr;
+    this->coil_drying_switch_ = nullptr;
+    this->coil_drying_sensor_ = nullptr;
 
     this->powerRequestWithoutResponses = 0;     // power request is not supported by all heatpump #112
 
@@ -330,6 +333,9 @@ bool CN105Climate::is_night_mode() {
 }
 bool CN105Climate::is_circulator() {
     return currentRunStates.circulator;
+}
+bool CN105Climate::is_power_saving() {
+    return currentRunStates.power_saving > 0;
 }
 
 // SERIAL_8E1

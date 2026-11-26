@@ -87,8 +87,29 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
         return false;
     }
 
-    ESP_LOGD("control", "Mode change asked");
-    this->mode = *call.get_mode();
+    climate::ClimateMode target_mode = *call.get_mode();
+    ESP_LOGD("control", "Mode change asked: %d (current mode: %d)", static_cast<int>(target_mode), static_cast<int>(this->mode));
+
+    // Handle coil drying / anti-mold post-cooling interception
+    if (this->is_drying_cycle_) {
+        if (target_mode == climate::CLIMATE_MODE_OFF) {
+            ESP_LOGI("CoilDrying", "User forced OFF during drying cycle. Aborting anti-mold cycle.");
+            this->cancel_coil_drying_cycle(false);
+            this->mode = climate::CLIMATE_MODE_OFF;
+            this->controlMode();
+            return true;
+        } else {
+            ESP_LOGI("CoilDrying", "User resumed operation. Cancelling anti-mold drying cycle.");
+            this->cancel_coil_drying_cycle(false);
+        }
+    } else if (target_mode == climate::CLIMATE_MODE_OFF && this->coil_drying_enabled_ &&
+               (this->mode == climate::CLIMATE_MODE_COOL || this->mode == climate::CLIMATE_MODE_DRY)) {
+        ESP_LOGI("CoilDrying", "Post-cooling anti-mold cycle starting: running fan for %u seconds before power off", this->coil_drying_duration_s_);
+        this->start_coil_drying_cycle();
+        return true;
+    }
+
+    this->mode = target_mode;
     this->controlMode();
     // Do NOT call controlTemperature() here unconditionally.
     // A mode-only change (e.g. switching to DRY) should not emit a SET temperature

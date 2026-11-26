@@ -44,8 +44,14 @@ void CN105Climate::set_horizontal_vane_select(
     if (!options.empty()) {
         this->horizontal_vane_options_strings_.clear();
         for (const auto& option : options) {
-            if (std::find(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP), option) != std::end(WIDEVANE_MAP)) {
-                this->horizontal_vane_options_strings_.push_back(option);
+            std::string resolved = option;
+            if (resolved == "SPLIT" || resolved == "LEFT_RIGHT" || resolved == "SPLIT_AIRFLOW") {
+                resolved = "←→";
+            }
+            if (std::find(std::begin(WIDEVANE_MAP), std::end(WIDEVANE_MAP), resolved) != std::end(WIDEVANE_MAP)) {
+                if (std::find(this->horizontal_vane_options_strings_.begin(), this->horizontal_vane_options_strings_.end(), resolved) == this->horizontal_vane_options_strings_.end()) {
+                    this->horizontal_vane_options_strings_.push_back(resolved);
+                }
             }
         }
     } else {
@@ -301,3 +307,77 @@ void CN105Climate::add_hardware_setting(HardwareSettingSelect* setting) {
 void CN105Climate::set_defrost_sensor(binary_sensor::BinarySensor* sensor) {
     this->defrost_sensor_ = sensor;
 }
+
+void CN105Climate::set_power_saving_switch(HVACOptionSwitch* Switch) {
+    this->power_saving_switch_ = Switch;
+    this->power_saving_switch_->setCallbackFunction([this](bool state) {
+        this->wantedRunStates.power_saving = state ? 1 : 0;
+
+        this->wantedRunStates.hasChanged = true;
+        this->wantedRunStates.hasBeenSent = false;
+        this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+    });
+}
+
+void CN105Climate::set_coil_drying_switch(HVACOptionSwitch* Switch) {
+    this->coil_drying_switch_ = Switch;
+    this->coil_drying_switch_->setCallbackFunction([this](bool state) {
+        this->coil_drying_enabled_ = state;
+        this->coil_drying_switch_->publish_state(state);
+        if (!state && this->is_drying_cycle_) {
+            this->cancel_coil_drying_cycle(false);
+            this->mode = climate::CLIMATE_MODE_OFF;
+            this->controlMode();
+            this->wantedSettings.hasChanged = true;
+            this->wantedSettings.hasBeenSent = false;
+            this->wantedSettings.lastChange = CUSTOM_MILLIS;
+            this->sendWantedSettings();
+        }
+    });
+}
+
+void CN105Climate::start_coil_drying_cycle() {
+    this->is_drying_cycle_ = true;
+    if (this->coil_drying_sensor_ != nullptr) {
+        this->coil_drying_sensor_->publish_state(true);
+    }
+    this->mode = climate::CLIMATE_MODE_FAN_ONLY;
+    this->setModeSetting("FAN");
+    this->setPowerSetting("ON");
+    this->setFanSpeed("QUIET");
+    this->setVaneSetting("—");
+    this->publish_state();
+
+    this->wantedSettings.hasChanged = true;
+    this->wantedSettings.hasBeenSent = false;
+    this->wantedSettings.lastChange = CUSTOM_MILLIS;
+    this->sendWantedSettings();
+
+    this->set_timeout("coil_drying", this->coil_drying_duration_s_ * 1000, [this]() {
+        ESP_LOGI("CoilDrying", "Coil drying anti-mold cycle complete. Powering OFF.");
+        this->is_drying_cycle_ = false;
+        if (this->coil_drying_sensor_ != nullptr) {
+            this->coil_drying_sensor_->publish_state(false);
+        }
+        this->mode = climate::CLIMATE_MODE_OFF;
+        this->setPowerSetting("OFF");
+        this->publish_state();
+
+        this->wantedSettings.hasChanged = true;
+        this->wantedSettings.hasBeenSent = false;
+        this->wantedSettings.lastChange = CUSTOM_MILLIS;
+        this->sendWantedSettings();
+    });
+}
+
+void CN105Climate::cancel_coil_drying_cycle(bool update_state) {
+    this->cancel_timeout("coil_drying");
+    this->is_drying_cycle_ = false;
+    if (this->coil_drying_sensor_ != nullptr) {
+        this->coil_drying_sensor_->publish_state(false);
+    }
+    if (update_state) {
+        this->publish_state();
+    }
+}
+

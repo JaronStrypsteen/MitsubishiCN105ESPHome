@@ -146,6 +146,10 @@ CONF_AIRFLOW_CONTROL_SELECT = "airflow_control_select"
 CONF_AIR_PURIFIER_SWITCH = "air_purifier_switch"
 CONF_NIGHT_MODE_SWITCH = "night_mode_switch"
 CONF_CIRCULATOR_SWITCH = "circulator_switch"
+CONF_POWER_SAVING_SWITCH = "power_saving_switch"
+CONF_COIL_DRYING_SWITCH = "coil_drying_switch"
+CONF_COIL_DRYING_SENSOR = "coil_drying_sensor"
+CONF_COIL_DRYING_DURATION = "coil_drying_duration"
 CONF_HARDWARE_SETTINGS = "hardware_settings"
 CONF_CODE = "code"
 CONF_OPTIONS = "options"
@@ -580,6 +584,14 @@ CONFIG_SCHEMA = (
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
             cv.Optional(CONF_CIRCULATOR_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
+            cv.Optional(CONF_POWER_SAVING_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
+            cv.Optional(CONF_COIL_DRYING_SWITCH): HVAC_OPTION_SWITCH_SCHEMA,
+            cv.Optional(CONF_COIL_DRYING_SENSOR): binary_sensor.binary_sensor_schema(
+                binary_sensor.BinarySensor,
+                icon="mdi:fan-clock",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_COIL_DRYING_DURATION, default="15min"): cv.positive_time_period_seconds,
             cv.Optional(CONF_HARDWARE_SETTINGS): HARDWARE_SETTING_SCHEMA,
             cv.Optional(
                 CONF_REMOTE_TEMPERATURE_CONTROL_SENSOR
@@ -858,6 +870,21 @@ def to_code(config):
     if CONF_CIRCULATOR_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_CIRCULATOR_SWITCH])
         cg.add(var.set_circulator_switch(switch_var))
+
+    if CONF_POWER_SAVING_SWITCH in config:
+        switch_var = yield switch.new_switch(config[CONF_POWER_SAVING_SWITCH])
+        cg.add(var.set_power_saving_switch(switch_var))
+
+    if CONF_COIL_DRYING_DURATION in config:
+        cg.add(var.set_coil_drying_duration(config[CONF_COIL_DRYING_DURATION]))
+
+    if CONF_COIL_DRYING_SWITCH in config:
+        switch_var = yield switch.new_switch(config[CONF_COIL_DRYING_SWITCH])
+        cg.add(var.set_coil_drying_switch(switch_var))
+
+    if CONF_COIL_DRYING_SENSOR in config:
+        sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_COIL_DRYING_SENSOR])
+        cg.add(var.set_coil_drying_sensor(sensor_var))
 
     # Set Fahrenheit compatibility mode (cast int to FahrenheitMode enum)
     # The enum validator returns the integer value from FAHRENHEIT_MODES dict

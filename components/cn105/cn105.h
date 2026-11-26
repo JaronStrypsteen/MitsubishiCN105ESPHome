@@ -93,6 +93,11 @@ namespace esphome {
         void set_air_purifier_switch(HVACOptionSwitch* air_purifier_switch);
         void set_night_mode_switch(HVACOptionSwitch* night_mode_switch);
         void set_circulator_switch(HVACOptionSwitch* circulator_switch);
+        void set_power_saving_switch(HVACOptionSwitch* power_saving_switch);
+        void set_coil_drying_switch(HVACOptionSwitch* coil_drying_switch);
+        void set_coil_drying_sensor(binary_sensor::BinarySensor* sensor) { this->coil_drying_sensor_ = sensor; }
+        void set_coil_drying_duration(uint32_t seconds) { this->coil_drying_duration_s_ = seconds; }
+        void set_coil_drying_enabled(bool enabled) { this->coil_drying_enabled_ = enabled; }
 
         void add_hardware_setting(HardwareSettingSelect* setting);
         void set_hardware_settings_interval(uint32_t interval_ms) { this->hardware_settings_interval_ms_ = interval_ms; }
@@ -141,6 +146,12 @@ namespace esphome {
         HVACOptionSwitch* air_purifier_switch_ = nullptr;
         HVACOptionSwitch* night_mode_switch_ = nullptr;
         HVACOptionSwitch* circulator_switch_ = nullptr;
+        HVACOptionSwitch* power_saving_switch_ = nullptr;
+        HVACOptionSwitch* coil_drying_switch_ = nullptr;
+        binary_sensor::BinarySensor* coil_drying_sensor_{ nullptr };
+        bool coil_drying_enabled_{ true };
+        bool is_drying_cycle_{ false };
+        uint32_t coil_drying_duration_s_{ 900 };
         binary_sensor::BinarySensor* defrost_sensor_{ nullptr };
         bool boost_active_{ false };
         float pre_boost_target_temperature_{ NAN };
@@ -193,6 +204,10 @@ namespace esphome {
         bool is_air_purifier();
         bool is_night_mode();
         bool is_circulator();
+        bool is_power_saving();
+        bool is_coil_drying_active() const { return this->is_drying_cycle_; }
+        void start_coil_drying_cycle();
+        void cancel_coil_drying_cycle(bool update_state = true);
 
         // checks if the field has changed
 

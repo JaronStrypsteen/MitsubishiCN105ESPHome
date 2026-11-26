@@ -137,6 +137,16 @@ void HeatPumpProfile::decode_settings() {
         }
     }
 
+    // --- POWER SAVING / ECONO COOL (byte 13 of 0x02 settings packet) ---
+    bool is_power_saving = (hp_.data[13] > 0);
+    ESP_LOGD("Decoder", "[Power saving : %s]", is_power_saving ? "ON" : "OFF");
+    if (hp_.power_saving_switch_ != nullptr) {
+        if (hp_.currentRunStates.power_saving != is_power_saving || hp_.power_saving_switch_->state != is_power_saving) {
+            hp_.currentRunStates.power_saving = is_power_saving;
+            hp_.power_saving_switch_->publish_state(is_power_saving);
+        }
+    }
+
     // --- AIRFLOW CONTROL START
     if (hp_.airflow_control_select_ != nullptr) {
         if (hp_.data[10] == 0x80) {
@@ -902,7 +912,8 @@ bool HeatPumpProfile::can_control_airflow() const {
 
 void HeatPumpProfile::setActionIfOperatingTo(climate::ClimateAction action_if_operating) {
     hp_.action = HeatPumpProtocol::operating_action(hp_.currentStatus.operating,
-        hp_.use_stage_for_operating_status_, hp_.currentSettings.stage, action_if_operating);
+        hp_.use_stage_for_operating_status_, hp_.currentSettings.stage, action_if_operating,
+        hp_.currentStatus.compressorFrequency);
 }
 
 // Hardware AUTO (HEAT_COOL / AUTO) picks its own direction, which can disagree with
@@ -1232,6 +1243,9 @@ float HeatPumpProfile::calculate_temperature_setting(float setting) const {
 }
 
 void HeatPumpProfile::set_wide_vane_setting(const char* setting) {
+    if (setting != nullptr && (std::strcmp(setting, "SPLIT") == 0 || std::strcmp(setting, "LEFT_RIGHT") == 0 || std::strcmp(setting, "SPLIT_AIRFLOW") == 0)) {
+        setting = "←→";
+    }
     int index = hp_.lookupByteMapIndex(WIDEVANE_MAP, 8, setting);
     if (index > -1) {
         hp_.wantedSettings.wideVane = WIDEVANE_MAP[index];
@@ -1279,6 +1293,12 @@ void HeatPumpProfile::apply_wanted_run_states() {
         if (hp_.night_mode_switch_->state != states.night_mode) {
             ESP_LOGI(TAG, "night mode setting changed");
             hp_.night_mode_switch_->publish_state(states.night_mode);
+        }
+    }
+    if (hp_.power_saving_switch_ != nullptr && hp_.wantedRunStates.power_saving > -1) {
+        if (hp_.power_saving_switch_->state != (states.power_saving > 0)) {
+            ESP_LOGI(TAG, "power saving setting changed");
+            hp_.power_saving_switch_->publish_state(states.power_saving > 0);
         }
     }
     if (hp_.circulator_switch_ != nullptr && hp_.wantedRunStates.circulator > -1) {
