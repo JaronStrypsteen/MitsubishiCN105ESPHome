@@ -276,6 +276,9 @@ void CN105Climate::dump_config() {
     ESP_LOGCONFIG(TAG, "  Power Unit is BTU: %s", YESNO(this->power_unit_is_btu_));
     ESP_LOGCONFIG(TAG, "  MSZ-A24NA Setpoint Table: %s", YESNO(this->use_msz_a24na_setpoint_table_));
     ESP_LOGCONFIG(TAG, "  Boost Duration: %" PRIu32 " ms", this->boost_duration_ms_);
+    const climate::ClimateTraits traits = this->get_traits();
+    ESP_LOGCONFIG(TAG, "  BOOST setpoint limits: %.1f C .. %.1f C",
+                  traits.get_visual_min_temperature(), traits.get_visual_max_temperature());
     ESP_LOGCONFIG(TAG, "  Away Temperature: %.1f C", this->away_temperature_);
     ESP_LOGCONFIG(TAG, "  Remote Temp Timeout: %" PRIu32 " ms", this->remote_temp_timeout_);
     ESP_LOGCONFIG(TAG, "  Remote Temp Keep-Alive: %" PRIu32 " ms", this->remote_temp_keepalive_interval_ms_);
