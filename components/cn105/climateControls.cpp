@@ -527,17 +527,20 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
 
         // Force maximum heating in HEAT mode (or maximum cooling in COOL mode)
         // so the compressor ramps to full capacity rather than blowing lukewarm/cold air.
+        // get_traits() includes the YAML visual overrides; traits_ alone still
+        // holds the component default maximum of 26 °C.
+        const climate::ClimateTraits traits = this->get_traits();
         if (this->mode == climate::CLIMATE_MODE_HEAT) {
-            float max_temp = this->traits_.get_visual_max_temperature();
+            float max_temp = traits.get_visual_max_temperature();
             this->setTargetTemperature(max_temp);
-            if (cn105_traits_requires_two_point(this->traits_)) {
+            if (cn105_traits_requires_two_point(traits)) {
                 this->setTargetTemperatureLow(max_temp);
             }
             this->controlTemperature();
         } else if (this->mode == climate::CLIMATE_MODE_COOL) {
-            float min_temp = this->traits_.get_visual_min_temperature();
+            float min_temp = traits.get_visual_min_temperature();
             this->setTargetTemperature(min_temp);
-            if (cn105_traits_requires_two_point(this->traits_)) {
+            if (cn105_traits_requires_two_point(traits)) {
                 this->setTargetTemperatureHigh(min_temp);
             }
             this->controlTemperature();
