@@ -12,9 +12,10 @@ using namespace esphome;
 
 
 bool CN105Climate::processInput(void) {
-    bool processed = false;
+    // Return true only when a complete frame was processed. Merely consuming
+    // bytes from a partial/noisy stream must not starve pending writes/cycles.
+    bool processed_frame = false;
     while (this->get_hw_serial_()->available()) {
-        processed = true;
         uint8_t inputData;
         if (this->get_hw_serial_()->read_byte(&inputData)) {
             ESP_LOGV("Decoder", "--> %02X", inputData);
@@ -22,10 +23,11 @@ bool CN105Climate::processInput(void) {
             if (this->parser_.frame_complete()) {
                 this->processDataPacket();
                 this->parser_.reset();
+                processed_frame = true;
             }
         }
     }
-    return processed;
+    return processed_frame;
 }
 
 /**
@@ -183,9 +185,37 @@ void CN105Climate::processCommand() {
         this->updateSuccess();
         break;
 
-    case 0x62:  /* packet contains data (room °C, settings, timer, status, or functions...)*/
+    case 0x62: {  /* packet contains data (room °C, settings, timer, status, or functions...)*/
+        const int payload_len = this->parser_.data_length();
+        if (payload_len < 1) {
+            ESP_LOGW("Decoder", "Ignoring empty 0x62 packet");
+            break;
+        }
+
+        // Decoders read fixed offsets. Reject checksum-valid but truncated frames
+        // before they can consume stale bytes left in the parser buffer.
+        const uint8_t code = this->data[0];
+        int min_len = 0;
+        switch (code) {
+        case 0x02: min_len = 15; break;  // settings, up to data[14]
+        case 0x03: min_len = 14; break;  // room/OAT/runtime, up to data[13]
+        case 0x04: min_len = 6;  break;  // error code, data[4] and data[5]
+        case 0x06: min_len = 9;  break;  // status, up to data[8]
+        case 0x09: min_len = 6;  break;  // sub-mode, up to data[5]
+        case 0x20:                   // fallthrough
+        case 0x22: min_len = 16; break;  // function settings
+        case 0x42: min_len = 4;  break;  // HVAC options, up to data[3]
+        default: break;                   // unknown codes are still logged downstream
+        }
+        if (payload_len < min_len) {
+            ESP_LOGW("Decoder", "Ignoring short 0x62 payload 0x%02X: got %d bytes, need >=%d",
+                     code, payload_len, min_len);
+            break;
+        }
+
         this->getDataFromResponsePacket();
         break;
+    }
     case 0x7a:  // Standard handshake
     case 0x7b:  // Installer handshake
         if (this->profile_->accepts_handshake(this->parser_.command(), this->parser_.raw()[3])) {

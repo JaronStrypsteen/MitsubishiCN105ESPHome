@@ -1,0 +1,126 @@
+substitutions:
+  name: "msz-ay35vgk"
+  friendly_name: "MSZ-AY35VGK"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: "Tuned CN105 configuration for the exact MSZ-AY35VGK indoor unit"
+
+esp32:
+  board: esp32doit-devkit-v1
+  framework:
+    type: esp-idf
+
+# CN105 uses UART0 on many boards, so move ESPHome logging to UART1.
+logger:
+  hardware_uart: UART1
+  level: INFO
+  logs:
+    CN105_CONN: INFO
+    Decoder: INFO
+    chkSum: INFO
+    READ: WARN
+    WRITE: WARN
+    WRITE_SETTINGS: INFO
+
+api:
+  encryption:
+    key: !secret encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_pwd
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} Fallback Hotspot"
+    password: !secret ota_pwd
+
+captive_portal:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+
+uart:
+  id: HP_UART
+  baud_rate: 2400
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+
+climate:
+  - platform: cn105
+    id: hp
+    name: ${friendly_name}
+    uart_id: HP_UART
+    update_interval: 2s
+    debounce_delay: 120ms
+    remote_temperature_timeout: 30min
+    remote_temperature_keepalive_interval: 0s
+
+    # Strongest AY hidden control: Mitsubishi NIGHT MODE on the 0x42 run-state packet.
+    night_mode_switch:
+      name: "Night mode"
+      disabled_by_default: true
+
+    # Read-only probes. Keep disabled by default until raw logs confirm the unit reports them.
+    defrost_sensor:
+      name: "Defrost"
+      disabled_by_default: true
+    error_code_sensor:
+      name: "Error code"
+      disabled_by_default: true
+    runtime_hours_sensor:
+      name: "Runtime hours"
+      entity_category: diagnostic
+      disabled_by_default: true
+    input_power_sensor:
+      name: "Input power"
+      disabled_by_default: true
+    kwh_sensor:
+      name: "Energy usage"
+      disabled_by_default: true
+    stage_sensor:
+      name: "Stage"
+      entity_category: diagnostic
+      disabled_by_default: true
+    sub_mode_sensor:
+      name: "Sub mode"
+      entity_category: diagnostic
+      disabled_by_default: true
+    auto_sub_mode_sensor:
+      name: "Auto sub mode"
+      entity_category: diagnostic
+      disabled_by_default: true
+    outside_air_temperature_sensor:
+      name: "Outside air temperature"
+      entity_category: diagnostic
+      disabled_by_default: true
+    compressor_frequency_sensor:
+      name: "Compressor frequency"
+      entity_category: diagnostic
+      disabled_by_default: true
+
+    vertical_vane_select:
+      name: "Vertical vane"
+      disabled_by_default: true
+
+    supports:
+      mode: [AUTO, COOL, HEAT, DRY, FAN_ONLY]
+      fan_mode: [AUTO, QUIET, LOW, MEDIUM, HIGH]
+      swing_mode: ["OFF", VERTICAL]
+      # Required by the BOOST preset. Only FULL is implemented.
+      custom_fan_mode: [FULL]
+      # Leave the synthetic HEAT_COOL band off on AY units unless explicitly needed.
+      dual_setpoint: false
+
+    visual:
+      min_temperature: 16
+      max_temperature: 31
+      temperature_step:
+        target_temperature: 0.5
+        current_temperature: 0.1

@@ -93,7 +93,7 @@ void CN105Climate::prepareSetPacket(uint8_t* packet, int length) {
     }
 }
 
-void CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive) {
+bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive) {
 
     if ((this->isUARTReady_()) &&
         (this->isHeatpumpConnectionActive() || (!checkIsActive))) {
@@ -107,21 +107,22 @@ void CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive) 
 
         // Prevent sending wantedSettings too soon after writing for example the remote temperature update packet
         this->lastSend = CUSTOM_MILLIS;
-
-    } else {
-        ESP_LOGW(TAG, "could not write as asked, because UART is not connected");
-        this->reconnectUART();
-        ESP_LOGW(TAG, "delaying packet writing because we need to reconnect first...");
-        if (length > PACKET_LEN) {
-            ESP_LOGE(TAG, "Packet length %d exceeds PACKET_LEN %d, dropping.", length, PACKET_LEN);
-            return;
-        }
-        memcpy(this->pending_packet_, packet, static_cast<size_t>(length));
-        this->pending_packet_len_ = length;
-        this->pending_check_is_active_ = checkIsActive;
-        this->has_pending_packet_ = true;
-        this->set_timeout("write", 4000, [this]() { this->try_write_pending_packet(); });
+        return true;
     }
+
+    ESP_LOGW(TAG, "could not write as asked, because UART is not connected");
+    this->reconnectUART();
+    ESP_LOGW(TAG, "delaying packet writing because we need to reconnect first...");
+    if (length > PACKET_LEN) {
+        ESP_LOGE(TAG, "Packet length %d exceeds PACKET_LEN %d, dropping.", length, PACKET_LEN);
+        return false;
+    }
+    memcpy(this->pending_packet_, packet, static_cast<size_t>(length));
+    this->pending_packet_len_ = length;
+    this->pending_check_is_active_ = checkIsActive;
+    this->has_pending_packet_ = true;
+    this->set_timeout("write", 4000, [this]() { this->try_write_pending_packet(); });
+    return false;
 }
 
 void CN105Climate::try_write_pending_packet() {
@@ -131,8 +132,13 @@ void CN105Climate::try_write_pending_packet() {
         this->set_timeout("write", 2000, [this]() { this->try_write_pending_packet(); });
         return;
     }
-    this->writePacket(this->pending_packet_, this->pending_packet_len_, this->pending_check_is_active_);
-    this->has_pending_packet_ = false;
+    // Only clear the pending flag when the write actually succeeded. writePacket()
+    // re-queues and re-schedules itself when UART reconnects are still in progress.
+    const bool written = this->writePacket(this->pending_packet_, this->pending_packet_len_,
+                                           this->pending_check_is_active_);
+    if (written) {
+        this->has_pending_packet_ = false;
+    }
 }
 
 const char* CN105Climate::getModeSetting() {

@@ -56,7 +56,7 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
     this->traits_.set_visual_temperature_step(ESPMHP_TEMPERATURE_STEP);
 
     if (!lossnay) {
-        this->set_supported_custom_fan_modes({"FULL"});
+        cn105_set_supported_custom_fan_modes(*this, this->config_traits(), std::vector<const char*>{"FULL"});
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_NONE);
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_BOOST);
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_SLEEP);
@@ -227,16 +227,22 @@ void CN105Climate::set_tx_rx_pins(int tx_pin, int rx_pin) {
 }
 
 void CN105Climate::pingExternalTemperature() {
+    this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
     this->set_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT, this->remote_temp_timeout_, [this]() {
         ESP_LOGW(LOG_REMOTE_TEMP, "Remote temperature timeout occured, fall back to internal temperature!");
+        this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
         this->stopRemoteTempKeepAlive();
-        this->set_remote_temperature(0);
+        // Do not call set_remote_temperature(0) here: it would ping the watchdog
+        // again and re-arm this timeout forever.
+        this->remoteTemperature_ = 0;
+        this->shouldSendExternalTemperature_ = true;
         });
 }
 
 void CN105Climate::set_remote_temp_timeout(uint32_t timeout) {
     this->remote_temp_timeout_ = timeout;
     if (timeout == 4294967295) {
+        this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
         ESP_LOGI(LOG_REMOTE_TEMP, "set_remote_temp_timeout is set to never.");
     } else {
         //ESP_LOGI(LOG_ACTION_EVT_TAG, "set_remote_temp_timeout is set to %lu", timeout);
@@ -249,9 +255,16 @@ void CN105Climate::set_remote_temp_timeout(uint32_t timeout) {
 void CN105Climate::set_remote_temp_keepalive_interval(uint32_t interval_ms) {
     this->remote_temp_keepalive_interval_ms_ = interval_ms;
     if (interval_ms == 0) {
+        this->stopRemoteTempKeepAlive();
         ESP_LOGI(LOG_REMOTE_TEMP, "Remote temperature keep-alive disabled.");
     } else {
         log_info_uint32(LOG_REMOTE_TEMP, "Remote temperature keep-alive interval set to ", interval_ms);
+        if (this->remote_temp_keepalive_active_) {
+            // Restart with the new interval instead of leaving the old schedule in place.
+            this->remote_temp_keepalive_active_ = false;
+            this->cancel_interval(SCHEDULER_REMOTE_TEMP_KEEPALIVE);
+            this->startRemoteTempKeepAlive();
+        }
     }
 }
 

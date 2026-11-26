@@ -123,7 +123,7 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
 }
 
 bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
-    if (call.get_custom_fan_mode() == "FULL") {
+    if (cn105_custom_fan_mode_equals(call, "FULL")) {
         ESP_LOGD("control", "Custom fan mode FULL asked");
         this->set_custom_fan_mode("FULL");
         this->fan_mode.reset();
@@ -159,11 +159,17 @@ void CN105Climate::finalizeControlIfUpdated(bool updated) {
     }
     ESP_LOGD(LOG_ACTION_EVT_TAG, "clim.control() -> User changed something...");
     logCheckWantedSettingsMutex(this->wantedSettings);
-    this->wantedSettings.hasChanged = true;
-    this->wantedSettings.hasBeenSent = false;
-    this->wantedSettings.lastChange = CUSTOM_MILLIS;
+    this->markWantedSettingsPending();
     this->debugSettings("control (wantedSettings)", this->wantedSettings);
     this->publish_state();
+}
+
+void CN105Climate::markWantedSettingsPending() {
+    mark_wanted_settings_pending(this->wantedSettings, CUSTOM_MILLIS);
+}
+
+void CN105Climate::markWantedRunStatesPending() {
+    mark_wanted_run_states_pending(this->wantedRunStates, CUSTOM_MILLIS);
 }
 
 void CN105Climate::control(const esphome::climate::ClimateCall& call) {
@@ -310,10 +316,7 @@ bool CN105Climate::has_custom_fan_mode() const {
 }
 
 std::string CN105Climate::get_custom_fan_mode_str() const {
-    if (this->has_custom_fan_mode()) {
-        return std::string(Climate::get_custom_fan_mode());
-    }
-    return "";
+    return cn105_get_custom_fan_mode(*this);
 }
 
 void CN105Climate::set_supported_custom_fan_modes_config(const std::vector<std::string>& modes) {
@@ -323,7 +326,7 @@ void CN105Climate::set_supported_custom_fan_modes_config(const std::vector<std::
     for (const auto& m : this->custom_fan_modes_storage_) {
         c_modes.push_back(m.c_str());
     }
-    this->set_supported_custom_fan_modes(c_modes);
+    cn105_set_supported_custom_fan_modes(*this, this->config_traits(), c_modes);
 }
 
 bool CN105Climate::processPresetChange(const esphome::climate::ClimateCall& call) {
@@ -336,7 +339,39 @@ bool CN105Climate::processPresetChange(const esphome::climate::ClimateCall& call
     return true;
 }
 
+void CN105Climate::restorePreBoostState_() {
+    if (!this->boost_active_) return;
+
+    this->boost_active_ = false;
+    this->cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+    this->preset = climate::CLIMATE_PRESET_NONE;
+
+    if (this->pre_boost_had_custom_fan_ && !this->pre_boost_fan_mode_.empty()) {
+        this->set_custom_fan_mode(this->pre_boost_fan_mode_.c_str());
+        this->setFanSpeed("4");
+    } else {
+        this->clear_custom_fan_mode();
+        this->fan_mode = this->pre_boost_std_fan_mode_;
+        this->controlFan();
+    }
+
+    if (!std::isnan(this->pre_boost_target_temperature_)) {
+        this->setTargetTemperature(this->pre_boost_target_temperature_);
+        this->controlTemperature();
+    }
+
+    // The timeout path does not go through control(), so mark the restore dirty
+    // or checkPendingWantedSettings() will never send it to the indoor unit.
+    this->markWantedSettingsPending();
+    this->publish_state();
+}
+
 void CN105Climate::change_preset_(climate::ClimatePreset preset) {
+    // Leaving BOOST must restore the saved fan/setpoint, not merely stop the timer.
+    if (preset != climate::CLIMATE_PRESET_BOOST && this->boost_active_) {
+        this->restorePreBoostState_();
+    }
+
     this->preset = preset;
 
     if (preset == climate::CLIMATE_PRESET_BOOST) {
@@ -356,30 +391,11 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
         this->setFanSpeed("4");
 
         // 15-minute boost timeout (900000 ms)
-        this->set_timeout("cn105_boost_timer", 15 * 60 * 1000, [this]() {
+        this->set_timeout(SCHEDULER_BOOST_TIMEOUT, 15 * 60 * 1000, [this]() {
             ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
-            this->boost_active_ = false;
-            this->preset = climate::CLIMATE_PRESET_NONE;
-            if (this->pre_boost_had_custom_fan_ && !this->pre_boost_fan_mode_.empty()) {
-                this->set_custom_fan_mode(this->pre_boost_fan_mode_.c_str());
-                this->setFanSpeed("4");
-            } else {
-                this->clear_custom_fan_mode();
-                this->fan_mode = this->pre_boost_std_fan_mode_;
-                this->controlFan();
-            }
-            if (!std::isnan(this->pre_boost_target_temperature_)) {
-                this->setTargetTemperature(this->pre_boost_target_temperature_);
-                this->controlTemperature();
-            }
-            this->publish_state();
+            this->restorePreBoostState_();
         });
     } else {
-        if (this->boost_active_) {
-            this->boost_active_ = false;
-            this->cancel_timeout("cn105_boost_timer");
-        }
-
         if (preset == climate::CLIMATE_PRESET_SLEEP) {
             ESP_LOGI("preset", "Activating SLEEP mode (Quiet fan + Night Mode)");
             this->clear_custom_fan_mode();
@@ -387,6 +403,7 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
             this->controlFan();
             if (this->night_mode_switch_ != nullptr) {
                 this->wantedRunStates.night_mode = 1;
+                this->markWantedRunStatesPending();
                 this->night_mode_switch_->publish_state(true);
             }
         } else if (preset == climate::CLIMATE_PRESET_ECO) {
@@ -396,12 +413,14 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
             this->controlFan();
             if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
                 this->wantedRunStates.night_mode = 0;
+                this->markWantedRunStatesPending();
                 this->night_mode_switch_->publish_state(false);
             }
         } else if (preset == climate::CLIMATE_PRESET_NONE) {
             ESP_LOGI("preset", "Clearing preset");
             if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
                 this->wantedRunStates.night_mode = 0;
+                this->markWantedRunStatesPending();
                 this->night_mode_switch_->publish_state(false);
             }
         }

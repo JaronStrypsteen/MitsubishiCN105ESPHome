@@ -186,7 +186,7 @@ struct HeatPumpProtocol {
         };
         field(wanted.power, POWER_MAP, POWER, 2, 8, 6, CONTROL_PACKET_1[0]);
         field(wanted.mode, MODE_MAP, MODE, 5, 9, 6, CONTROL_PACKET_1[1]);
-        if (wanted.temperature != -1.0f) {
+        if (std::isfinite(wanted.temperature) && wanted.temperature != -1.0f) {
             if (special_table) {
                 packet[10] = cn105_protocol::encode_msz_a24na_setpoint(wanted.temperature);
                 packet[6] |= CONTROL_PACKET_1[2];

@@ -432,7 +432,7 @@ namespace esphome {
         int lookupByteMapIndex(const char* valuesMap[], int len, const char* lookupValue, const char* debugInfo = "");
         int lookupByteMapIndex(const int valuesMap[], int len, int lookupValue, const char* debugInfo = "");
 
-        void writePacket(uint8_t* packet, int length, bool checkIsActive = true);
+        bool writePacket(uint8_t* packet, int length, bool checkIsActive = true);
         void prepareInfoPacket(uint8_t* packet, int length);
         void prepareSetPacket(uint8_t* packet, int length);
 
@@ -470,6 +470,9 @@ namespace esphome {
         bool processFanChange(const esphome::climate::ClimateCall& call);
         bool processSwingChange(const esphome::climate::ClimateCall& call);
         void finalizeControlIfUpdated(bool updated);
+        void markWantedSettingsPending();
+        void markWantedRunStatesPending();
+        void restorePreBoostState_();
         void createPacket(uint8_t* packet);
         void createInfoPacket(uint8_t* packet, uint8_t code);
         heatpumpSettings currentSettings{};

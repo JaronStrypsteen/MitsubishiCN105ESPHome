@@ -128,6 +128,10 @@ void RequestScheduler::mark_response_seen(uint8_t code, CN105Climate* context) {
 
     for (auto& req : requests_) {
         if (req.code == code) {
+            if (!req.awaiting) {
+                ESP_LOGD(LOG_CYCLE_TAG, "Ignoring duplicate/unsolicited response <0x%02X>", code);
+                return;
+            }
             req.awaiting = false;
             req.failures = 0;
             ESP_LOGD(LOG_CYCLE_TAG, "Received %s <0x%02X>", req.description, req.code);
@@ -202,15 +206,15 @@ bool RequestScheduler::process_response(uint8_t code, CN105Climate* context) {
         context = context_callback_();
     }
 
-    // Find out if the code is managed by the scheduler
-    bool handled = false;
+    // Only a response that was actually requested may advance the cycle.
+    bool awaiting = false;
     for (auto& req : requests_) {
-        if (req.code == code) {
-            handled = true;
+        if (req.code == code && req.awaiting) {
+            awaiting = true;
             break;
         }
     }
-    if (!handled) return false;
+    if (!awaiting) return false;
 
     mark_response_seen(code, context);
     send_next_after(code, context);

@@ -147,6 +147,18 @@ TEST(HeatPumpProfile, BothTemperatureEncodingsAndSpecialTable) {
     EXPECT_EQ(special[19], 0);
 }
 
+TEST(HeatPumpProfile, NaNTargetIsNeverEncoded) {
+    wantedHeatpumpSettings wanted{};
+    wanted.temperature = NAN;
+    uint8_t packet[22]{};
+
+    HeatPumpProtocol::encode_control(packet, wanted, {}, false, false, false, false);
+
+    EXPECT_EQ(packet[6] & CONTROL_PACKET_1[2], 0);
+    EXPECT_EQ(packet[10], 0);
+    EXPECT_EQ(packet[19], 0);
+}
+
 TEST(HeatPumpProfile, RemoteTemperatureEncodingAndInternalSensorFallback) {
     uint8_t remote[22]{}, internal[22]{};
     HeatPumpProtocol::encode_remote_temperature(remote, 21.5);

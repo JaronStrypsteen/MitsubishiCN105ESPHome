@@ -100,6 +100,32 @@ TEST(HeatpumpSettingsTest, InequalityOperator_Works) {
 // wantedHeatpumpSettings tests
 // ========================================================
 
+TEST(WantedSettingsDirtyFlags, MarkPendingClearsSentAndRefreshesTimestamp) {
+    wantedHeatpumpSettings ws{};
+    ws.hasChanged = false;
+    ws.hasBeenSent = true;
+    ws.lastChange = 0;
+
+    mark_wanted_settings_pending(ws, 1234);
+
+    EXPECT_TRUE(ws.hasChanged);
+    EXPECT_FALSE(ws.hasBeenSent);
+    EXPECT_EQ(ws.lastChange, 1234);
+}
+
+TEST(WantedRunStatesDirtyFlags, MarkPendingClearsSentAndRefreshesTimestamp) {
+    wantedHeatpumpRunStates wr{};
+    wr.hasChanged = false;
+    wr.hasBeenSent = true;
+    wr.lastChange = 0;
+
+    mark_wanted_run_states_pending(wr, 5678);
+
+    EXPECT_TRUE(wr.hasChanged);
+    EXPECT_FALSE(wr.hasBeenSent);
+    EXPECT_EQ(wr.lastChange, 5678);
+}
+
 TEST(WantedHeatpumpSettingsTest, ResetSettings_IncludesFlags) {
     wantedHeatpumpSettings ws{};
     ws.hasChanged = true;

@@ -25,6 +25,7 @@ static const char* LOG_CONN_TAG = "CN105_CONN";
 
 static const char* SHEDULER_REMOTE_TEMP_TIMEOUT = "->remote_temp_timeout";
 static const char* SCHEDULER_REMOTE_TEMP_KEEPALIVE = "->remote_temp_keepalive";
+static const char* SCHEDULER_BOOST_TIMEOUT = "cn105_boost_timer";
 
 // Default interval for remote temperature keep-alive (20 seconds, as observed on Kumo)
 static const uint32_t DEFAULT_REMOTE_TEMP_KEEPALIVE_INTERVAL_MS = 20000;
@@ -311,3 +312,17 @@ struct wantedHeatpumpRunStates : heatpumpRunStates {
         return *this;
     }
 };
+
+// Shared by control() callbacks and timeout callbacks: without these flags
+// checkPendingWantedSettings()/checkPendingWantedRunStates() never send.
+inline void mark_wanted_settings_pending(wantedHeatpumpSettings& settings, long now) {
+    settings.hasChanged = true;
+    settings.hasBeenSent = false;
+    settings.lastChange = now;
+}
+
+inline void mark_wanted_run_states_pending(wantedHeatpumpRunStates& states, long now) {
+    states.hasChanged = true;
+    states.hasBeenSent = false;
+    states.lastChange = now;
+}

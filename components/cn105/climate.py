@@ -103,6 +103,29 @@ def _esphome_version_tuple():
     return tuple(parts)
 
 
+def _keepalive_interval(value):
+    """Validate a keep-alive interval without ESPHome coercing 0s to 1ms.
+
+    ESPHome 2026.11 changed cv.update_interval() to turn literal 0ms into 1ms.
+    For this component 0s is the documented way to disable the keep-alive, so
+    use the lower-level period validator that preserves zero. "never" maps to
+    the same disabled value.
+    """
+    if isinstance(value, str) and value.strip().lower() == "never":
+        value = "0ms"
+    # cv.update_interval() coerces 0ms to 1ms in newer ESPHome; the lower-level
+    # period validator keeps literal zero (and is available across 2025.11+).
+    return cv.All(cv.time_period, cv.time_period_in_milliseconds_)(value)
+
+
+def _custom_fan_modes(value):
+    """Only FULL is implemented, and BOOST depends on it being advertised."""
+    value = cv.ensure_list(cv.In(DEFAULT_CUSTOM_FAN_MODES))(value)
+    if "FULL" not in value:
+        raise cv.Invalid("supports.custom_fan_mode must include FULL (currently the only implemented custom fan mode)")
+    return value
+
+
 # Feature flags / FixedVector: ESPHome 2025.11.0. Old supports_* accessors
 # were removed in 2026.5.0. 2025.7.x (issue #733) needs the legacy setters.
 _HAS_CLIMATE_FEATURE_FLAGS = _esphome_version_tuple() >= (2025, 11, 0)
@@ -562,7 +585,7 @@ CONFIG_SCHEMA = (
             # Keep-alive interval for remote temperature (like Kumo does every ~20s)
             # Set to 0s to disable keep-alive
             cv.Optional(CONF_REMOTE_TEMP_KEEPALIVE_INTERVAL, default="20s"): cv.All(
-                cv.update_interval
+                _keepalive_interval
             ),
             cv.Optional(CONF_DEBOUNCE_DELAY, default="100ms"): cv.All(
                 cv.update_interval
@@ -609,7 +632,7 @@ CONFIG_SCHEMA = (
                     ): cv.ensure_list(climate.validate_climate_fan_mode),
                     cv.Optional(
                         CONF_CUSTOM_FAN_MODE, default=DEFAULT_CUSTOM_FAN_MODES
-                    ): cv.ensure_list(cv.string),
+                    ): _custom_fan_modes,
                     cv.Optional(
                         CONF_SWING_MODE
                     ): cv.ensure_list(climate.validate_climate_swing_mode),
@@ -756,10 +779,10 @@ def to_code(config):
         # new_select s'occupe de l'enregistrement. options=[] est important.
         swing_select_var = yield select.new_select(conf_item, options=[])
         if horizontal_vane_options:
+            # cg.safe_exp() escapes quotes/backslashes before we emit the
+            # explicit vector type expected by set_horizontal_vane_select().
             options_vector = cg.RawExpression(
-                "std::vector<std::string>{"
-                + ", ".join([f'"{opt}"' for opt in horizontal_vane_options])
-                + "}"
+                "std::vector<std::string>" + str(cg.safe_exp(list(horizontal_vane_options)))
             )
         else:
             options_vector = cg.RawExpression("std::vector<std::string>{}")
@@ -967,8 +990,9 @@ def to_code(config):
             options_map = setting_conf[CONF_OPTIONS]
 
             # Build inline initializer list for std::map: {{key1, "val1"}, {key2, "val2"}, ...}
+            # cg.safe_exp() escapes quotes/backslashes in user-supplied labels.
             map_entries = ", ".join(
-                [f'{{{val}, "{label}"}}' for val, label in options_map.items()]
+                [f'{{{val}, {cg.safe_exp(label)}}}' for val, label in options_map.items()]
             )
             map_expr = cg.RawExpression(f"std::map<int, std::string>{{{map_entries}}}")
 

@@ -28,6 +28,8 @@ The benefits include fully local control over your heat pump system, without rel
 - Byte-by-byte reading within the loop() function ensures no data loss or lag, as the component continuously reads without blocking ESPHome.
 - UART writes are followed by non-blocking reads. The responses are accumulated byte-by-byte in the loop() method and processed when complete, allowing command stacking without delays for a more responsive UI.
 - Support for Lossnay heat recovery ventilation systems
+- Climate presets: `BOOST` (15-minute full fan), `SLEEP` (quiet fan + night mode), and `ECO` (low fan, night mode cleared), plus a `defrost_sensor` diagnostic entity.
+- YAML-configurable custom fan modes. Only `FULL` is currently implemented and is advertised by default; BOOST relies on it.
 
 ### Retained Features
 
@@ -42,7 +44,7 @@ This project maintains all functionalities of the original [geoffdavis](https://
 
 ## Requirements
 
-- [ESPHome](https://esphome.io/) — **2025.7 or later**. ESPHome **2025.11+** is recommended (native `ClimateTraits` feature flags and `FixedVector` select options). 2025.7–2025.10 remain buildable via compile-time API shims (see issue #733). Install independently or as a Home Assistant add-on.
+- [ESPHome](https://esphome.io/) — **2025.11 or later** for this release. The climate presets, custom fan modes, and native `ClimateTraits` feature flags use APIs introduced in 2025.11; older 2025.7–2025.10 trees are no longer claimed as buildable. Install independently or as a Home Assistant add-on.
 
 ## Supported Microcontrollers
 
@@ -84,6 +86,8 @@ Units tested by project contributors include:
 - `SEZ-KD25VAQ`
 - `SEZ-M50DAL`
 - `MSZ-A24NA` (See `msz_a24na_setpoint_table` and `fahrenheit_compatibility`)
+
+For the exact `MSZ-AY35VGK` model, see the [tuned configuration](docs/msz-ay35vgk.md) and [`examples/msz-ay35vgk/`](examples/msz-ay35vgk/). Do not assume `MSZ-AY35VGKP` features such as the air purifier apply to the non-P model.
 
 Known working Lossnay units using `lossnay: true`:
 
@@ -348,6 +352,47 @@ climate:
       # Example to hide "←→" and "AIRFLOW CONTROL" if not supported by your unit:
       horizontal_vane_mode: ["←←", "←", "|", "→", "→→", SWING]
 ```
+
+#### Climate presets
+
+Non-Lossnay climate entities advertise `NONE`, `BOOST`, `SLEEP`, and `ECO` presets:
+
+| Preset  | Behavior |
+| ------- | -------- |
+| `NONE`  | Clears any active preset. If night mode was enabled by `SLEEP`, it is sent to the indoor unit as OFF. |
+| `BOOST` | Saves the current setpoint and fan mode, switches the fan to `FULL`, and automatically restores the previous state after 15 minutes. Selecting another preset also restores the saved state immediately. |
+| `SLEEP` | Selects `QUIET` fan and enables Mitsubishi NIGHT MODE via the same run-state packet used by `night_mode_switch`. |
+| `ECO`   | Selects `LOW` fan and clears NIGHT MODE. |
+
+> [!NOTE]
+> `BOOST` requires the `FULL` custom fan mode. Keep `supports.custom_fan_mode: [FULL]` (the default) if you use presets.
+
+#### Defrost sensor
+
+Add `defrost_sensor` to expose the heat pump's defrost/preheat sub-mode as a diagnostic binary sensor. The decoder ignores the filter-reminder bit (`0x01`) when other sub-mode bits are set, so `0x03` is reported as DEFROST rather than being confused with the reminder. Many units never report this state; leave the entity disabled if it never changes on yours.
+
+```yaml
+climate:
+  - platform: cn105
+    id: hp
+    defrost_sensor:
+      name: Defrost
+      disabled_by_default: true
+```
+
+#### Custom fan modes
+
+`supports.custom_fan_mode` advertises custom fan modes to Home Assistant. Only `FULL` is implemented today; other values are rejected at config validation time instead of being advertised and ignored.
+
+```yaml
+climate:
+  - platform: cn105
+    id: hp
+    supports:
+      custom_fan_mode: [FULL]
+```
+
+`dual_setpoint` defaults to `false`. Only enable it if you specifically want a synthetic HEAT_COOL band; many AY units do not need it.
 
 #### Lossnay example
 

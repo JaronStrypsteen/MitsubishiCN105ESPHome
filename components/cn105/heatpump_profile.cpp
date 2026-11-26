@@ -731,7 +731,13 @@ void HeatPumpProfile::control_temperature() {
     default:
         // Other modes : use median temperature
         if (cn105_traits_requires_two_point(hp_.traits_)) {
-            setting = (hp_.getTargetTemperatureLow() + hp_.getTargetTemperatureHigh()) / 2.0f;
+            const float low = hp_.getTargetTemperatureLow();
+            const float high = hp_.getTargetTemperatureHigh();
+            if (std::isnan(low) || std::isnan(high)) {
+                setting = hp_.getTargetTemperature();
+            } else {
+                setting = (low + high) / 2.0f;
+            }
         } else {
             setting = hp_.getTargetTemperature();
         }
