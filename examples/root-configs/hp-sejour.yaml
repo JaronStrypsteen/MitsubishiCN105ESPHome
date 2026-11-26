@@ -62,19 +62,19 @@ logger:
 
 # Enable Home Assistant API
 api:
-  services:
-    - service: reboot
+  actions:
+    - action: reboot
       then:
         - logger.log: "Redémarrage en cours..."
         - lambda: |-
             ESP.restart();
-    - service: set_remote_temperature
+    - action: set_remote_temperature
       variables:
         temperature: float
       then:
         - lambda: 'id(clim_sejour).set_remote_temperature(temperature);'
 
-    - service: use_internal_temperature
+    - action: use_internal_temperature
       then:
         - lambda: 'id(clim_sejour).set_remote_temperature(0);'
   encryption:

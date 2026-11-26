@@ -28,9 +28,7 @@ void CN105Climate::set_vertical_vane_select(
         ESP_LOGD("EVT", "vane.control() -> Demande un chgt de réglage de la vane: %s", setting);
 
         this->setVaneSetting(setting);
-        this->wantedSettings.hasChanged = true;
-        this->wantedSettings.hasBeenSent = false;
-        this->wantedSettings.lastChange = CUSTOM_MILLIS;
+        this->markWantedSettingsPending();
         });
 
 }
@@ -67,9 +65,7 @@ void CN105Climate::set_horizontal_vane_select(
         ESP_LOGD("EVT", "wideVane.control() -> Demande un chgt de réglage de la wideVane: %s", setting);
 
         this->setWideVaneSetting(setting);
-        this->wantedSettings.hasChanged = true;
-        this->wantedSettings.hasBeenSent = false;
-        this->wantedSettings.lastChange = CUSTOM_MILLIS;
+        this->markWantedSettingsPending();
         });
 
 }
@@ -87,9 +83,7 @@ void CN105Climate::set_airflow_control_select(
             ESP_LOGD("EVT", "airFlow -> Request for change of airflow control setting: %s", setting);
 
             this->setAirflowControlSetting(setting);
-            this->wantedRunStates.hasChanged = true;
-            this->wantedRunStates.hasBeenSent = false;
-            this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+            this->markWantedRunStatesPending();
         } else {
             // Re-publish current state; guard against null (not yet received from heat pump)
             if (this->currentRunStates.airflow_control != nullptr) {
@@ -212,9 +206,7 @@ void CN105Climate::set_air_purifier_switch(HVACOptionSwitch* Switch) {
     this->air_purifier_switch_->setCallbackFunction([this](bool state) {
         this->wantedRunStates.air_purifier = state;
 
-        this->wantedRunStates.hasChanged = true;
-        this->wantedRunStates.hasBeenSent = false;
-        this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+        this->markWantedRunStatesPending();
         });
 }
 
@@ -223,9 +215,7 @@ void CN105Climate::set_night_mode_switch(HVACOptionSwitch* Switch) {
     this->night_mode_switch_->setCallbackFunction([this](bool state) {
         this->wantedRunStates.night_mode = state;
 
-        this->wantedRunStates.hasChanged = true;
-        this->wantedRunStates.hasBeenSent = false;
-        this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+        this->markWantedRunStatesPending();
         });
 }
 
@@ -234,9 +224,7 @@ void CN105Climate::set_circulator_switch(HVACOptionSwitch* Switch) { // only in 
     this->circulator_switch_->setCallbackFunction([this](bool state) {
         this->wantedRunStates.circulator = state;
 
-        this->wantedRunStates.hasChanged = true;
-        this->wantedRunStates.hasBeenSent = false;
-        this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+        this->markWantedRunStatesPending();
         });
 }
 
@@ -313,9 +301,7 @@ void CN105Climate::set_power_saving_switch(HVACOptionSwitch* Switch) {
     this->power_saving_switch_->setCallbackFunction([this](bool state) {
         this->wantedRunStates.power_saving = state ? 1 : 0;
 
-        this->wantedRunStates.hasChanged = true;
-        this->wantedRunStates.hasBeenSent = false;
-        this->wantedRunStates.lastChange = CUSTOM_MILLIS;
+        this->markWantedRunStatesPending();
     });
 }
 
@@ -328,9 +314,7 @@ void CN105Climate::set_coil_drying_switch(HVACOptionSwitch* Switch) {
             this->cancel_coil_drying_cycle(false);
             this->mode = climate::CLIMATE_MODE_OFF;
             this->controlMode();
-            this->wantedSettings.hasChanged = true;
-            this->wantedSettings.hasBeenSent = false;
-            this->wantedSettings.lastChange = CUSTOM_MILLIS;
+            this->markWantedSettingsPending();
             this->sendWantedSettings();
         }
     });
@@ -348,9 +332,7 @@ void CN105Climate::start_coil_drying_cycle() {
     this->setVaneSetting("—");
     this->publish_state();
 
-    this->wantedSettings.hasChanged = true;
-    this->wantedSettings.hasBeenSent = false;
-    this->wantedSettings.lastChange = CUSTOM_MILLIS;
+    this->markWantedSettingsPending();
     this->sendWantedSettings();
 
     this->set_timeout("coil_drying", this->coil_drying_duration_s_ * 1000, [this]() {
@@ -363,9 +345,7 @@ void CN105Climate::start_coil_drying_cycle() {
         this->setPowerSetting("OFF");
         this->publish_state();
 
-        this->wantedSettings.hasChanged = true;
-        this->wantedSettings.hasBeenSent = false;
-        this->wantedSettings.lastChange = CUSTOM_MILLIS;
+        this->markWantedSettingsPending();
         this->sendWantedSettings();
     });
 }

@@ -7,18 +7,22 @@ The tuned example is [`examples/msz-ay35vgk/msz-ay35vgk.yaml`](../examples/msz-a
 ## What is enabled by default
 
 - Standard modes, fan speeds, vertical swing, and the `FULL` custom fan mode.
-- `BOOST`, `SLEEP`, and `ECO` presets. These are registered automatically for non-Lossnay climate entities. `SLEEP` drives the Mitsubishi NIGHT MODE bit; `BOOST` restores the saved fan/setpoint after 15 minutes.
+- `BOOST`, `SLEEP`, and `ECO` presets. These are registered automatically for non-Lossnay climate entities. `SLEEP` drives the Mitsubishi NIGHT MODE bit; `BOOST` restores the saved fan/setpoint after `boost_duration` (15 minutes by default).
 - `night_mode_switch`, disabled by default in Home Assistant. Enable it after you confirm the `0x42` packet changes when you toggle it.
 - Diagnostic entities, disabled by default: defrost, error code, runtime hours, input power, kWh, stage, sub-mode, auto sub-mode, outside air temperature, and compressor frequency.
 
-`dual_setpoint` is deliberately `false`. The AY units generally use one hardware setpoint; the dual setpoint option creates a synthetic HEAT_COOL band and is not needed for normal AY operation.
+`dual_setpoint` is deliberately `false`. The AY units generally use one hardware setpoint; the dual setpoint option creates a synthetic HEAT_COOL band and is not needed for normal AY operation. If you enable it for an experiment, `HEAT_COOL` must also be present in `supports.mode`; validation rejects it otherwise.
+
+The example sets `model: MSZ-AY35VGK` and `strict_capabilities: true`. The built-in manifest is exact-model only: it records `night_mode`, `boost`, `sleep`, and `eco` as supported, and denies VGKP-only options. It does **not** copy evidence from `MSZ-AY35VGKP`. Set `strict_capabilities: false` if you want a denied option to compile with a runtime warning instead of a validation error.
+
+`uart_port: 2` is explicit because GPIO16/GPIO17 are UART2 on the ESP32 dev board used by the example. Leaving it out infers the port from UART declaration order and can reinitialize the wrong controller.
 
 ## What is deliberately omitted
 
 Do not enable these on `MSZ-AY35VGK` without model-specific evidence:
 
 - `air_purifier_switch` — purifier support has only been observed on VGKP models.
-- `isee_sensor` and `supports.airflow_control` — 3D i-See is not evidenced on this model.
+- `isee_sensor` and `airflow_control_select` — 3D i-See is not evidenced on this model. The airflow select also requires `isee_sensor`, so it is rejected without one.
 - `lossnay: true`, `msz_a24na_setpoint_table: true`, `target_humidity_sensor`, `split_vertical`, and `supports.horizontal_vane_mode` with non-standard options.
 - `hardware_settings` writes. Read-only investigation is fine; writing unknown function codes can switch some units off.
 
@@ -64,7 +68,7 @@ If an entity never produces a state after several complete cycles, leave it disa
 
 1. Set a normal setpoint and fan speed.
 2. Select `BOOST`. Confirm a `WRITE_SETTINGS` frame with `FULL`/high fan and the boosted setpoint, then an ACK.
-3. Wait 15 minutes or select `SLEEP`/`ECO`/`NONE`. Confirm a second `WRITE_SETTINGS` frame restores the original fan and setpoint.
+3. Wait `boost_duration` (15 minutes by default) or select `SLEEP`/`ECO`/`NONE`. Confirm a second `WRITE_SETTINGS` frame restores the original fan and setpoint.
 4. Select `SLEEP`. Confirm the run-state packet sets the night-mode bit and the `night_mode_switch` entity follows it.
 5. Select `ECO` or `NONE`. Confirm the night-mode bit is cleared and the switch entity follows it.
 

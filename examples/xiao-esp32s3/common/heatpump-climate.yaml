@@ -64,6 +64,7 @@ climate:
     remote_temperature_timeout: 60min
     update_interval: 2s
     debounce_delay : 100ms
+    uart_port: 0  # GPIO43/GPIO44 are UART0 on ESP32-S3
     # Various optional sensors, not all sensors are supported by all heatpumps
     compressor_frequency_sensor:
       name: Compressor Frequency

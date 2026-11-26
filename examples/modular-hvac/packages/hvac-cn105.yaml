@@ -85,9 +85,9 @@ climate:
       disabled_by_default: true
     supports:
       # Explicitly control dual setpoint support in the UI/traits
-      # Defaults to false when omitted
+      # Defaults to false when omitted. Requires HEAT_COOL below.
       dual_setpoint: true
       # You can still specify supported modes as before
-      mode: [AUTO, COOL, HEAT, DRY, FAN_ONLY]
+      mode: [AUTO, COOL, HEAT, HEAT_COOL, DRY, FAN_ONLY]
       fan_mode: [AUTO, QUIET, LOW, MEDIUM, HIGH]
       swing_mode: ["OFF", VERTICAL]

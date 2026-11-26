@@ -14,17 +14,17 @@ esp32:
   framework:
     type: esp-idf
 
-# UART configuration for Wemos D1 Mini Pro
+# Xiao ESP32-S3 uses GPIO43/GPIO44 for UART0. CN105 is on those pins here,
+# so the logger must not use UART0.
 uart:
   id: HP_UART
   baud_rate: 2400
   tx_pin: GPIO43
   rx_pin: GPIO44
 
-  # Enable logging
+  # Enable logging over USB; UART0 is reserved for CN105.
 logger:
-  # hardware_uart: UART1  # Uncomment if CN105 uses UART0 (ESP8266 and some ESP32 boards, e.g. ATOM Lite)
-  # hardware_uart: USB_CDC  # ESP32-S3 USB serial alternative
+  hardware_uart: USB_CDC
   level: INFO
   logs:
     EVT_SETS : INFO

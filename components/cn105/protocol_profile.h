@@ -30,7 +30,7 @@ class Cn105ProtocolProfile {
     virtual void decode_settings() = 0;
     virtual void decode_status() = 0;
     virtual heatpumpStatus decode_room_status(const uint8_t* data, const heatpumpStatus& previous) const;
-    virtual std::string decode_error(const uint8_t* data) const { return CommonProtocol::decode_error(data); }
+    virtual std::string decode_error(const uint8_t* data) const;
     virtual bool decode_functions(uint8_t code, const uint8_t* data, size_t length) { return false; }
     virtual bool decode_submode() = 0;
     virtual void decode_hvac_options() {}

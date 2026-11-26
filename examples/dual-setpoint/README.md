@@ -110,11 +110,11 @@ min_cooling_run_time: 600s      # 10 minutes minimum cooling runtime
 
 This file configures the underlying hardware and sensors:
 
-#### **Home Assistant API Services**
+#### **Home Assistant API Actions**
 ```yaml
-services:
-  - service: set_remote_temperature    # Override internal sensor
-  - service: use_internal_temperature # Revert to internal sensor
+actions:
+  - action: set_remote_temperature    # Override internal sensor
+  - action: use_internal_temperature # Revert to internal sensor
 ```
 
 #### **Hardware Components**
@@ -146,7 +146,7 @@ Before you start, make sure you have:
 
 - ✅ **ESPHome installed and configured**
   - If you don't have ESPHome, install it first: https://esphome.io/guides/installing_esphome.html
-  - You need ESPHome version 2025.7.0 or later (2025.11+ recommended)
+  - You need ESPHome version 2025.11.0 or later for this component release
   - ESPHome can be installed via Home Assistant add-on, Docker, or Python pip
 
 - ✅ **Home Assistant running** (with ESPHome integration configured)

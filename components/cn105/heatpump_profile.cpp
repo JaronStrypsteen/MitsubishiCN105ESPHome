@@ -474,9 +474,11 @@ bool HeatPumpProfile::hasPendingUserTemperature() const {
 }
 
 bool HeatPumpProfile::isWithinPostSendGrace() const {
-    if (!hp_.wantedSettings.hasBeenSent) return false;
+    // `lastChange` is cleared by resetSettings() immediately after a successful
+    // SET, so it cannot implement a post-send grace. `last_sent_ms` survives.
+    if (hp_.wantedSettings.last_sent_ms == 0) return false;
     uint32_t graceMs = hp_.update_interval_ + DEFER_SCHEDULE_UPDATE_LOOP_DELAY;
-    return (CUSTOM_MILLIS - hp_.wantedSettings.lastChange) < graceMs;
+    return (CUSTOM_MILLIS - hp_.wantedSettings.last_sent_ms) < graceMs;
 }
 
 bool HeatPumpProfile::disagreesWithLastUserSetpoint(float incoming) const {

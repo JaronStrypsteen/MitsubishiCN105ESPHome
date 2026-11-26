@@ -385,13 +385,18 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
                 this->pre_boost_std_fan_mode_ = this->fan_mode.value();
             }
         }
-        ESP_LOGI("preset", "Activating BOOST mode (15 min Super High fan)...");
+        if (this->boost_duration_ms_ >= 60000) {
+            ESP_LOGI("preset", "Activating BOOST mode (%u min Super High fan)...",
+                     static_cast<unsigned>(this->boost_duration_ms_ / 60000));
+        } else {
+            ESP_LOGI("preset", "Activating BOOST mode (%u s Super High fan)...",
+                     static_cast<unsigned>(this->boost_duration_ms_ / 1000));
+        }
         this->set_custom_fan_mode("FULL");
         this->fan_mode.reset();
         this->setFanSpeed("4");
 
-        // 15-minute boost timeout (900000 ms)
-        this->set_timeout(SCHEDULER_BOOST_TIMEOUT, 15 * 60 * 1000, [this]() {
+        this->set_timeout(SCHEDULER_BOOST_TIMEOUT, this->boost_duration_ms_, [this]() {
             ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
             this->restorePreBoostState_();
         });

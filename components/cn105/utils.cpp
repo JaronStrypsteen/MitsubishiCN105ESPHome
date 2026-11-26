@@ -20,6 +20,57 @@ void esphome::log_debug_uint32(const char* tag, const char* msg, uint32_t value,
 #endif
 }
 
+void CN105Climate::log_capability_manifest_() const {
+    if (this->model_name_.empty()) {
+        ESP_LOGI(TAG, "Model capability manifest: not configured; no model-specific claims");
+        return;
+    }
+
+    struct CapabilityEntry {
+        ModelCapability bit;
+        const char* name;
+    };
+    static const CapabilityEntry entries[] = {
+        {ModelCapability::NIGHT_MODE, "night_mode"},
+        {ModelCapability::BOOST, "boost"},
+        {ModelCapability::SLEEP, "sleep"},
+        {ModelCapability::ECO, "eco"},
+        {ModelCapability::AIR_PURIFIER, "air_purifier"},
+        {ModelCapability::ISEE, "isee"},
+        {ModelCapability::AIRFLOW_CONTROL, "airflow_control"},
+        {ModelCapability::TARGET_HUMIDITY, "target_humidity"},
+        {ModelCapability::DUAL_SETPOINT, "dual_setpoint"},
+        {ModelCapability::HARDWARE_SETTINGS_WRITES, "hardware_settings_writes"},
+    };
+
+    std::string supported;
+    std::string denied;
+    auto append = [](std::string& target, const char* name) {
+        if (!target.empty()) target += ", ";
+        target += name;
+    };
+    for (const auto& entry : entries) {
+        const uint16_t bit = static_cast<uint16_t>(entry.bit);
+        if ((this->capability_supported_mask_ & bit) != 0) {
+            append(supported, entry.name);
+        } else if ((this->capability_denied_mask_ & bit) != 0) {
+            append(denied, entry.name);
+        }
+    }
+
+    ESP_LOGI(TAG, "Model '%s' capability manifest (%s, strict=%s): supported=[%s] denied=[%s]",
+             this->model_name_.c_str(), this->capability_source_.c_str(),
+             this->strict_capabilities_ ? "YES" : "NO",
+             supported.empty() ? "-" : supported.c_str(),
+             denied.empty() ? "-" : denied.c_str());
+}
+
+void CN105Climate::warn_if_capability_denied_(ModelCapability capability, const char* option) const {
+    if (!this->capability_denied_(capability)) return;
+    ESP_LOGW(TAG, "%s is denied by the %s capability manifest for model '%s'; use raw logs only as a probe",
+             option, this->capability_source_.c_str(), this->model_name_.c_str());
+}
+
 bool CN105Climate::hasChanged(const char* before, const char* now, const char* field, bool checkNotNull) {
     if (now == NULL) {
         if (checkNotNull) {
@@ -299,7 +350,7 @@ void CN105Climate::hpPacketDebug(const uint8_t* packet, unsigned int length, con
     snprintf(fullLabel, sizeof(fullLabel), "%s%s", label, subLabel);
 
     // HEADER: First 5 bytes
-    char headerStr[5 * 3 + 1];
+    char headerStr[5 * 3 + 1] = "";
     for (unsigned int i = 0; i < 5; i++) {
         snprintf(headerStr + i * 3, 4, "%02X ", packet[i]);
     }
@@ -375,76 +426,89 @@ int CN105Climate::lookupByteMapValue(const int valuesMap[], const uint8_t byteMa
  * This methode emulates the esp32 lock_guard feature with a boolean variable
  *
 */
+namespace {
+class BooleanMutexGuard {
+  public:
+    explicit BooleanMutexGuard(volatile bool& flag) : flag_(flag) { flag_ = true; }
+    ~BooleanMutexGuard() { flag_ = false; }
+    BooleanMutexGuard(const BooleanMutexGuard&) = delete;
+    BooleanMutexGuard& operator=(const BooleanMutexGuard&) = delete;
+
+  private:
+    volatile bool& flag_;
+};
+}  // namespace
+
+/**
+ * ESP8266 has no std::mutex. Defer rather than "force unlock": forcing would
+ * let two critical sections overlap once the timeout fired.
+ */
 void CN105Climate::emulateMutex(const char* retryName, std::function<void()>&& f) {
-    if (!this->wantedSettingsMutex) {
-        this->wantedSettingsMutex = true;
-        ESP_LOGD(retryName, "emulateMutex direct lock acquired");
-        f();
-        this->wantedSettingsMutex = false;
-        return;
-    }
+    static uint32_t retry_counter = 0;
     auto callback = std::make_shared<std::function<void()>>(std::move(f));
     auto retry = std::make_shared<std::function<void(uint8_t, uint32_t)>>();
     std::weak_ptr<std::function<void(uint8_t, uint32_t)>> weak_retry = retry;
-    *retry = [this, retryName, weak_retry, callback](uint8_t retry_count, uint32_t delay_ms) {
+
+    // Each caller gets its own timeout name so independent retries cannot
+    // cancel each other.
+    const std::string timeout_name = std::string(retryName) + "_" + std::to_string(++retry_counter);
+
+    // The function keeps only a weak self-reference; each scheduled timeout
+    // captures a strong reference. This keeps deferred work alive without a
+    // self-retaining shared_ptr cycle after the final retry.
+    *retry = [this, timeout_name, weak_retry, callback](uint8_t retry_count, uint32_t delay_ms) {
         if (this->wantedSettingsMutex) {
             if (retry_count >= 10) {
-                ESP_LOGW(retryName, "10 retry calls failed because mutex was locked, forcing unlock...");
-                this->wantedSettingsMutex = true;
-                (*callback)();
-                this->wantedSettingsMutex = false;
+                ESP_LOGW(timeout_name.c_str(), "mutex still locked after 10 retries; dropping deferred work");
                 return;
             }
-            ESP_LOGI(retryName, "wantedSettingsMutex is already locked, deferring...");
-            const uint32_t next_delay_ms = static_cast<uint32_t>(delay_ms * 1.2f);
-            if (auto retry = weak_retry.lock()) {
-                this->set_timeout(retryName, delay_ms, [retry, retry_count, next_delay_ms]() {
-                    (*retry)(retry_count + 1, next_delay_ms);
-                });
+            ESP_LOGI(timeout_name.c_str(), "mutex locked, deferring...");
+            const uint32_t next_delay_ms = delay_ms + delay_ms / 5;
+            if (auto self = weak_retry.lock()) {
+                this->set_timeout(timeout_name.c_str(), delay_ms,
+                                  [self, retry_count, next_delay_ms]() {
+                                      (*self)(retry_count + 1, next_delay_ms);
+                                  });
             }
             return;
-        } else {
-            this->wantedSettingsMutex = true;
-            ESP_LOGD(retryName, "emulateMutex normal behaviour, locking...");
-            (*callback)();
-            ESP_LOGD(retryName, "emulateMutex unlocking...");
-            this->wantedSettingsMutex = false;
-            return;
         }
+
+        BooleanMutexGuard guard(this->wantedSettingsMutex);
+        ESP_LOGD(timeout_name.c_str(), "lock acquired");
+        (*callback)();
     };
+
     (*retry)(0, 100);
 }
 #ifdef TEST_MODE
 
 void CN105Climate::testEmulateMutex(const char* retryName, std::function<void()>&& f) {
+    static uint32_t test_retry_counter = 0;
     auto callback = std::make_shared<std::function<void()>>(std::move(f));
     auto retry = std::make_shared<std::function<void(uint8_t, uint32_t)>>();
     std::weak_ptr<std::function<void(uint8_t, uint32_t)>> weak_retry = retry;
-    *retry = [this, retryName, weak_retry, callback](uint8_t retry_count, uint32_t delay_ms) {
+    const std::string timeout_name = std::string(retryName) + "_" + std::to_string(++test_retry_counter);
+
+    *retry = [this, timeout_name, weak_retry, callback](uint8_t retry_count, uint32_t delay_ms) {
         if (this->esp8266Mutex) {
             if (retry_count >= 10) {
-                ESP_LOGW(retryName, "10 retry calls failed because mutex was locked, forcing unlock...");
-                this->esp8266Mutex = true;
-                (*callback)();
-                this->esp8266Mutex = false;
+                ESP_LOGW(timeout_name.c_str(), "mutex still locked after 10 retries; dropping deferred test work");
                 return;
             }
-            ESP_LOGI(retryName, "testMutex is already locked, defferring...");
-            const uint32_t next_delay_ms = static_cast<uint32_t>(delay_ms * 1.2f);
-            if (auto retry = weak_retry.lock()) {
-                this->set_timeout(retryName, delay_ms, [retry, retry_count, next_delay_ms]() {
-                    (*retry)(retry_count + 1, next_delay_ms);
-                });
+            ESP_LOGI(timeout_name.c_str(), "test mutex locked, deferring...");
+            const uint32_t next_delay_ms = delay_ms + delay_ms / 5;
+            if (auto self = weak_retry.lock()) {
+                this->set_timeout(timeout_name.c_str(), delay_ms,
+                                  [self, retry_count, next_delay_ms]() {
+                                      (*self)(retry_count + 1, next_delay_ms);
+                                  });
             }
             return;
-        } else {
-            this->esp8266Mutex = true;
-            ESP_LOGD(retryName, "emulateMutex normal behaviour, locking...");
-            (*callback)();
-            ESP_LOGD(retryName, "emulateMutex unlocking...");
-            this->esp8266Mutex = false;
-            return;
         }
+
+        BooleanMutexGuard guard(this->esp8266Mutex);
+        ESP_LOGD(timeout_name.c_str(), "test mutex acquired");
+        (*callback)();
     };
     (*retry)(0, 100);
 }

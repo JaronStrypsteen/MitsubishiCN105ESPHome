@@ -200,25 +200,45 @@ void RequestScheduler::send_next_after(uint8_t previous_code, CN105Climate* cont
     }
 }
 
-bool RequestScheduler::process_response(uint8_t code, CN105Climate* context) {
-    // Get context if not provided but callback is available
+void RequestScheduler::decode_late_response(uint8_t code, CN105Climate* context) {
     if (!context && context_callback_) {
         context = context_callback_();
     }
 
-    // Only a response that was actually requested may advance the cycle.
-    bool awaiting = false;
     for (auto& req : requests_) {
-        if (req.code == code && req.awaiting) {
-            awaiting = true;
-            break;
+        if (req.code != code) continue;
+        // A late/unsolicited frame is still valid payload data. Decode it via
+        // the registered handler, but never clear `awaiting` or move the cycle.
+        if (req.onResponse && context) {
+            ESP_LOGD(LOG_CYCLE_TAG, "Decoding late/unsolicited response <0x%02X> (%s)", code, req.description);
+            req.onResponse(*context);
+        } else {
+            ESP_LOGD(LOG_CYCLE_TAG, "Ignoring late/unsolicited response <0x%02X>", code);
         }
+        return;
     }
-    if (!awaiting) return false;
+}
 
-    mark_response_seen(code, context);
-    send_next_after(code, context);
-    return true;
+RequestScheduler::ResponseResult RequestScheduler::process_response(uint8_t code, CN105Climate* context) {
+    if (!context && context_callback_) {
+        context = context_callback_();
+    }
+
+    for (auto& req : requests_) {
+        if (req.code != code) continue;
+
+        // Only a response that was actually requested may advance the cycle.
+        if (!req.awaiting) {
+            decode_late_response(code, context);
+            return ResponseResult::LATE;
+        }
+
+        mark_response_seen(code, context);
+        send_next_after(code, context);
+        return ResponseResult::AWAITED;
+    }
+
+    return ResponseResult::NONE;
 }
 
 void RequestScheduler::loop() {

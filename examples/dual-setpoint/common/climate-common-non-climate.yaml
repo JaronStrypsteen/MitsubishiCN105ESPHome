@@ -6,11 +6,11 @@
 
 api:
   id: ha_api
-  services:
+  actions:
     # Custom service to set remote temperature sensor value
     # This allows Home Assistant to override the internal temperature sensor
     # with a more accurate remote sensor (e.g., room temperature sensor)
-    - service: set_remote_temperature
+    - action: set_remote_temperature
       variables:
         temperature: float  # Temperature value in Celsius
       then:
@@ -18,7 +18,7 @@ api:
     
     # Custom service to disable remote temperature and use internal sensor
     # This reverts to using the ESP32's internal temperature sensor
-    - service: use_internal_temperature
+    - action: use_internal_temperature
       then:
         - lambda: 'id(splitunit).set_remote_temperature(0);'
   
@@ -81,7 +81,7 @@ external_components:
   #   - source: github://echavet/MitsubishiCN105ESPHome
   - source:
       type: local
-      path: ../../../components
+      path: ../../components
 
 # =============================================================================
 # UART COMMUNICATION

@@ -106,13 +106,28 @@ namespace esphome {
          */
         void mark_response_seen(uint8_t code, CN105Climate* context = nullptr);
 
+        /// How a received response relates to the current request cycle.
+        enum class ResponseResult : uint8_t {
+            NONE,     ///< Not a registered response code
+            LATE,     ///< Known response, but no matching request is awaiting it
+            AWAITED,  ///< Matching request was awaiting this response
+        };
+
+        /**
+         * @brief Decode a known response that arrived late or unsolicited.
+         *
+         * The frame is still useful (settings/status may have changed) but it
+         * must not advance the request cycle or refresh connection watchdogs.
+         */
+        void decode_late_response(uint8_t code, CN105Climate* context = nullptr);
+
         /**
          * @brief Processes a response received
          * @param code The code of the response received
          * @param context CN105Climate context to call onResponse (can be nullptr, uses context_callback_ if provided)
-         * @return true if the response has been processed, false otherwise
+         * @return Whether this was an awaited response, a late/unsolicited one, or unknown
          */
-        bool process_response(uint8_t code, CN105Climate* context = nullptr);
+        ResponseResult process_response(uint8_t code, CN105Climate* context = nullptr);
 
         /**
          * @brief Method to call in the main loop to manage timeouts

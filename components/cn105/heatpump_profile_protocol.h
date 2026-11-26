@@ -88,9 +88,10 @@ struct HeatPumpProtocol {
         refresh_action();
         return true;
     }
-    static bool accepts_remote_temperature(float setting) { return !std::isnan(setting); }
+    static bool accepts_remote_temperature(float setting) { return std::isfinite(setting); }
     static float normalize_remote_temperature(float setting, FahrenheitSupport& fahrenheit) {
-        return setting > 0 ? fahrenheit.normalizeUiTemperatureToHeatpumpTemperature(setting) : setting;
+        if (!std::isfinite(setting) || setting <= 0) return setting;
+        return fahrenheit.normalizeUiTemperatureToHeatpumpTemperature(setting);
     }
     static bool can_control_airflow(const heatpumpSettings& current) {
         return current.wideVane != nullptr && std::strcmp(current.wideVane, WIDEVANE_MAP[7]) == 0;
@@ -154,6 +155,7 @@ struct HeatPumpProtocol {
                 return setting;
             return setting;  // already clamped to the nearer bound of 16–31
         }
+        if (!std::isfinite(setting)) return setting;
         setting = std::round(2.0f * setting) / 2.0f;
         return setting < 10 ? 10 : (setting > 31 ? 31 : setting);
     }
@@ -191,7 +193,9 @@ struct HeatPumpProtocol {
                 packet[10] = cn105_protocol::encode_msz_a24na_setpoint(wanted.temperature);
                 packet[6] |= CONTROL_PACKET_1[2];
             } else if (encoding_b) {
-                packet[19] = static_cast<uint8_t>(wanted.temperature * 2 + 128);
+                // Use the same rounding/clamping as the setpoint API so a
+                // fractional or out-of-range value cannot wrap the byte.
+                packet[19] = cn105_protocol::encode_temperature_b(wanted.temperature);
                 packet[6] |= CONTROL_PACKET_1[2];
             } else {
                 const int index = cn105_protocol::lookup_index(TEMP_MAP, 16, static_cast<int>(wanted.temperature));

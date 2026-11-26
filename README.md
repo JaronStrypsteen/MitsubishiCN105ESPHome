@@ -1,6 +1,6 @@
 # Mitsubishi CN105 ESPHome
 
-This project is a firmware for ESP32 microcontrollers supporting UART communication via the CN105 Mitsubishi connector. Its purpose is to enable complete control of a compatible Mitsubishi heat pump or Lossnay through Home Assistant, a web interface, or any MQTT client.
+This project is a firmware for ESP32 and ESP8266 microcontrollers supporting UART communication via the CN105 Mitsubishi connector. Its purpose is to enable complete control of a compatible Mitsubishi heat pump or Lossnay through Home Assistant, a web interface, or any MQTT client.
 
 It uses the ESPHome framework and is compatible with the Arduino framework and ESP-IDF.
 
@@ -28,7 +28,7 @@ The benefits include fully local control over your heat pump system, without rel
 - Byte-by-byte reading within the loop() function ensures no data loss or lag, as the component continuously reads without blocking ESPHome.
 - UART writes are followed by non-blocking reads. The responses are accumulated byte-by-byte in the loop() method and processed when complete, allowing command stacking without delays for a more responsive UI.
 - Support for Lossnay heat recovery ventilation systems
-- Climate presets: `BOOST` (15-minute full fan), `SLEEP` (quiet fan + night mode), and `ECO` (low fan, night mode cleared), plus a `defrost_sensor` diagnostic entity.
+- Climate presets: `BOOST` (full fan for `boost_duration`, 15 minutes by default), `SLEEP` (quiet fan + night mode), and `ECO` (low fan, night mode cleared), plus a `defrost_sensor` diagnostic entity.
 - YAML-configurable custom fan modes. Only `FULL` is currently implemented and is advertised by default; BOOST relies on it.
 
 ### Retained Features
@@ -341,10 +341,10 @@ climate:
       disabled_by_default: true
     supports:
       # Explicitly control dual setpoint support in the UI/traits
-      # Defaults to false when omitted
+      # Defaults to false when omitted. Requires HEAT_COOL below.
       dual_setpoint: true
       # You can still specify supported modes as before
-      mode: [AUTO, COOL, HEAT, DRY, FAN_ONLY]
+      mode: [AUTO, COOL, HEAT, HEAT_COOL, DRY, FAN_ONLY]
       fan_mode: [AUTO, QUIET, LOW, MEDIUM, HIGH]
       swing_mode: ["OFF", VERTICAL]
       # Specify which options to display in horizontal_vane_select dropdown
@@ -360,7 +360,7 @@ Non-Lossnay climate entities advertise `NONE`, `BOOST`, `SLEEP`, and `ECO` prese
 | Preset  | Behavior |
 | ------- | -------- |
 | `NONE`  | Clears any active preset. If night mode was enabled by `SLEEP`, it is sent to the indoor unit as OFF. |
-| `BOOST` | Saves the current setpoint and fan mode, switches the fan to `FULL`, and automatically restores the previous state after 15 minutes. Selecting another preset also restores the saved state immediately. |
+| `BOOST` | Saves the current setpoint and fan mode, switches the fan to `FULL`, and automatically restores the previous state after `boost_duration` (15 minutes by default). Selecting another preset also restores the saved state immediately. |
 | `SLEEP` | Selects `QUIET` fan and enables Mitsubishi NIGHT MODE via the same run-state packet used by `night_mode_switch`. |
 | `ECO`   | Selects `LOW` fan and clears NIGHT MODE. |
 
@@ -392,7 +392,40 @@ climate:
       custom_fan_mode: [FULL]
 ```
 
-`dual_setpoint` defaults to `false`. Only enable it if you specifically want a synthetic HEAT_COOL band; many AY units do not need it.
+`dual_setpoint` defaults to `false`. Only enable it if you specifically want a synthetic HEAT_COOL band; many AY units do not need it. Configuration validation requires `HEAT_COOL` in `supports.mode` whenever `dual_setpoint: true`.
+
+#### Advanced / hidden options
+
+These options are supported but left out of the short example above. They are useful for model-specific tuning and troubleshooting:
+
+| Option | Purpose |
+| ------ | ------- |
+| `uart_port` | Explicit controller index (`0`, `1`, or `2`) used by the ESP32 low-level UART reinit. Without it the component infers the index from UART declaration order, which can be wrong. Set it when CN105 is not on the first declared UART. |
+| `boost_duration` | How long `BOOST` keeps the `FULL` fan and raised setpoint before restoring the previous state. Default `15min`. Requires `supports.custom_fan_mode: [FULL]` (the default). |
+| `error_code_translations` | Map a primary error code (`1`–`127`) to a human-readable string. Bit 7 of the protocol byte is only an availability flag and is stripped before lookup. |
+| `model` | Exact model name, e.g. `MSZ-AY35VGK`. Enables the built-in capability manifest when one exists. |
+| `capabilities` | Optional exact-model override with `supported`/`denied` lists and a `source` label. Requires `model`. |
+| `strict_capabilities` | Reject configuration that enables a denied capability. Default `false` (runtime warning only). Requires `model`. |
+
+Capability names are `night_mode`, `boost`, `sleep`, `eco`, `air_purifier`, `isee`, `airflow_control`, `target_humidity`, `dual_setpoint`, and `hardware_settings_writes`. Built-in data is exact-model only: evidence from `MSZ-AY35VGKP` is **not** applied to `MSZ-AY35VGK`.
+
+```yaml
+climate:
+  - platform: cn105
+    id: hp
+    uart_id: HP_UART
+    uart_port: 2              # CN105 on GPIO16/GPIO17 (UART2) on many ESP32 dev boards
+    boost_duration: 10min
+    error_code_translations:
+      11: "Indoor coil thermistor error"
+    model: "MSZ-AY35VGK"
+    strict_capabilities: true
+    # Override or extend the built-in manifest only with model-specific evidence:
+    # capabilities:
+    #   supported: [night_mode, boost, sleep, eco]
+    #   denied: [air_purifier, isee, airflow_control, target_humidity]
+    #   source: "verified from my unit"
+```
 
 #### Lossnay example
 
@@ -994,8 +1027,8 @@ This example extends to default `api:` component to add a `set_remote_temperatur
 api:
   encryption:
     key: !secret api_key
-  services:
-    - service: set_remote_temperature
+  actions:
+    - action: set_remote_temperature
       variables:
         temperature: float
       then:
@@ -1004,7 +1037,7 @@ api:
         # the bottom receives the value in F, converting to C here.
         - lambda: "id(hp).set_remote_temperature(temperature);"
     #        - lambda: 'id(hp).set_remote_temperature((temperature - 32.0) * (5.0 / 9.0));'
-    - service: use_internal_temperature
+    - action: use_internal_temperature
       then:
         - lambda: "id(hp).set_remote_temperature(0);"
 ```

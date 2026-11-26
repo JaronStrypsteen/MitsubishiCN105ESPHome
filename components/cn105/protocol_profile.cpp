@@ -11,6 +11,10 @@ heatpumpStatus Cn105ProtocolProfile::decode_room_status(const uint8_t* data, con
     return CommonProtocol::decode_room_status(data, previous);
 }
 
+std::string Cn105ProtocolProfile::decode_error(const uint8_t* data) const {
+    return CommonProtocol::decode_error(data, hp_.error_code_translations_);
+}
+
 std::unique_ptr<Cn105ProtocolProfile> make_protocol_profile(CN105Climate& climate, bool lossnay) {
     if (lossnay) return std::make_unique<LossnayProfile>(climate);
     return std::make_unique<HeatPumpProfile>(climate);

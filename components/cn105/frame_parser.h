@@ -102,8 +102,17 @@ public:
     /// Only valid after frame_complete() returns true.
     const uint8_t* data() const { return &buffer_[5]; }
 
-    /// Pointer to the full raw frame buffer (header + payload, no checksum).
+    /// Pointer to the full raw frame buffer (header + payload + received checksum).
     const uint8_t* raw() const { return buffer_; }
+
+    /// Received checksum byte, only valid after frame_complete().
+    uint8_t received_checksum() const { return checksum_byte_; }
+
+    /// Checksum computed from the received header/payload, only valid after frame_complete().
+    uint8_t expected_checksum() const {
+        if (!frame_complete_) return 0;
+        return checksum(buffer_, data_length_ + 5);
+    }
 
     /// Total frame size including header, payload, and checksum.
     int frame_size() const {

@@ -51,8 +51,7 @@ void CN105Climate::sendFirstConnectionPacket() {
     } else {
         ESP_LOGE(LOG_CONN_TAG, "UART doesn't seem to be connected...");
         this->setupUART();
-        // this delay to prevent a logging flood should never happen
-        CUSTOM_DELAY(750);
+        // No blocking delay: the connection FSM retries on a 2s cadence.
     }
 }
 
@@ -93,7 +92,58 @@ void CN105Climate::prepareSetPacket(uint8_t* packet, int length) {
     }
 }
 
-bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive) {
+bool CN105Climate::enqueue_pending_write_(const uint8_t* packet, int length, bool checkIsActive,
+                                          PendingWriteKind kind, float value) {
+    if (length <= 0 || length > PACKET_LEN) {
+        ESP_LOGE(TAG, "Packet length %d is invalid (PACKET_LEN %d), dropping.", length, PACKET_LEN);
+        return false;
+    }
+    if (this->pending_write_count_ >= MAX_PENDING_WRITES) {
+        ESP_LOGE(TAG, "Pending write queue full (%u entries), dropping new packet",
+                 static_cast<unsigned>(this->pending_write_count_));
+        return false;
+    }
+
+    PendingWrite& entry = this->pending_writes_[this->pending_write_count_++];
+    entry = PendingWrite{};
+    std::memcpy(entry.bytes, packet, static_cast<size_t>(length));
+    entry.length = static_cast<uint8_t>(length);
+    entry.check_is_active = checkIsActive;
+    entry.kind = kind;
+    entry.value = value;
+    switch (kind) {
+    case PendingWriteKind::SETTINGS:
+        entry.generation = this->wantedSettings.generation;
+        break;
+    case PendingWriteKind::RUN_STATES:
+        entry.generation = this->wantedRunStates.generation;
+        break;
+    case PendingWriteKind::GENERAL:
+    case PendingWriteKind::REMOTE_TEMP:
+    default:
+        entry.generation = 0;
+        break;
+    }
+    return true;
+}
+
+bool CN105Climate::dequeue_pending_write_(PendingWrite& out) {
+    if (this->pending_write_count_ == 0) return false;
+    out = this->pending_writes_[0];
+    for (uint8_t i = 1; i < this->pending_write_count_; ++i) {
+        this->pending_writes_[i - 1] = this->pending_writes_[i];
+    }
+    --this->pending_write_count_;
+    this->pending_writes_[this->pending_write_count_] = PendingWrite{};
+    return true;
+}
+
+bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive,
+                               PendingWriteKind kind, float value) {
+    if (length <= 0 || length > PACKET_LEN) {
+        ESP_LOGE(TAG, "Packet length %d is invalid (PACKET_LEN %d), dropping.", length, PACKET_LEN);
+        return false;
+    }
 
     if ((this->isUARTReady_()) &&
         (this->isHeatpumpConnectionActive() || (!checkIsActive))) {
@@ -113,31 +163,76 @@ bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive) 
     ESP_LOGW(TAG, "could not write as asked, because UART is not connected");
     this->reconnectUART();
     ESP_LOGW(TAG, "delaying packet writing because we need to reconnect first...");
-    if (length > PACKET_LEN) {
-        ESP_LOGE(TAG, "Packet length %d exceeds PACKET_LEN %d, dropping.", length, PACKET_LEN);
+    if (!this->enqueue_pending_write_(packet, length, checkIsActive, kind, value)) {
         return false;
     }
-    memcpy(this->pending_packet_, packet, static_cast<size_t>(length));
-    this->pending_packet_len_ = length;
-    this->pending_check_is_active_ = checkIsActive;
-    this->has_pending_packet_ = true;
     this->set_timeout("write", 4000, [this]() { this->try_write_pending_packet(); });
     return false;
 }
 
+void CN105Climate::finish_write_(PendingWriteKind kind, float value, uint32_t generation) {
+    switch (kind) {
+    case PendingWriteKind::SETTINGS:
+        this->wantedSettings.last_sent_ms = CUSTOM_MILLIS;
+        if (generation != this->wantedSettings.generation) {
+            // A newer command arrived while the packet was queued. Keep it
+            // pending; publishing the old packet would overwrite HA state.
+            this->wantedSettings.hasBeenSent = false;
+            ESP_LOGD(TAG, "Skipping stale settings completion (packet gen %u, current gen %u)",
+                     static_cast<unsigned>(generation), static_cast<unsigned>(this->wantedSettings.generation));
+            return;
+        }
+        this->publishWantedSettingsStateToHA();
+        this->wantedSettings.resetSettings();
+        this->loopCycle.deferCycle();
+        break;
+    case PendingWriteKind::RUN_STATES:
+        this->wantedRunStates.last_sent_ms = CUSTOM_MILLIS;
+        if (generation != this->wantedRunStates.generation) {
+            this->wantedRunStates.hasBeenSent = false;
+            ESP_LOGD(TAG, "Skipping stale run-state completion (packet gen %u, current gen %u)",
+                     static_cast<unsigned>(generation), static_cast<unsigned>(this->wantedRunStates.generation));
+            return;
+        }
+        this->publishWantedRunStatesStateToHA();
+        this->wantedRunStates.resetSettings();
+        this->loopCycle.deferCycle();
+        break;
+    case PendingWriteKind::REMOTE_TEMP:
+        this->last_remote_temp_send_ms_ = CUSTOM_MILLIS;
+        this->last_remote_temp_sent_ = value;
+        break;
+    case PendingWriteKind::GENERAL:
+    default:
+        break;
+    }
+}
+
 void CN105Climate::try_write_pending_packet() {
-    if (!this->has_pending_packet_) return;
+    PendingWrite entry{};
+    if (!this->dequeue_pending_write_(entry)) return;
+
     if (!this->isUARTReady_()) {
+        // Put it back at the front so queue order is preserved.
+        for (uint8_t i = this->pending_write_count_; i > 0; --i) {
+            this->pending_writes_[i] = this->pending_writes_[i - 1];
+        }
+        this->pending_writes_[0] = entry;
+        ++this->pending_write_count_;
         this->reconnectUART();
         this->set_timeout("write", 2000, [this]() { this->try_write_pending_packet(); });
         return;
     }
-    // Only clear the pending flag when the write actually succeeded. writePacket()
-    // re-queues and re-schedules itself when UART reconnects are still in progress.
-    const bool written = this->writePacket(this->pending_packet_, this->pending_packet_len_,
-                                           this->pending_check_is_active_);
+
+    // The entry was already removed. If writePacket() fails it re-enqueues the
+    // packet itself, avoiding re-queue recursion from this retry path.
+    const bool written = this->writePacket(entry.bytes, entry.length, entry.check_is_active,
+                                           entry.kind, entry.value);
     if (written) {
-        this->has_pending_packet_ = false;
+        this->finish_write_(entry.kind, entry.value, entry.generation);
+    }
+    if (this->pending_write_count_ > 0) {
+        this->set_timeout("write", 2000, [this]() { this->try_write_pending_packet(); });
     }
 }
 
@@ -232,25 +327,26 @@ void CN105Climate::publishWantedRunStatesStateToHA() {
 
 
 void CN105Climate::sendWantedSettingsDelegate() {
-    this->wantedSettings.hasBeenSent = true;
-    this->lastSend = CUSTOM_MILLIS;
     ESP_LOGI(TAG, "sending wantedSettings..");
     this->debugSettings("wantedSettings", wantedSettings);
     // and then we send the update packet
     uint8_t packet[PACKET_LEN] = {};
     this->createPacket(packet);
-    this->writePacket(packet, PACKET_LEN);
+    const uint32_t generation = this->wantedSettings.generation;
+    const bool written = this->writePacket(packet, PACKET_LEN, true,
+                                           PendingWriteKind::SETTINGS);
     this->hpPacketDebug(packet, 22, "WRITE_SETTINGS");
 
-    this->publishWantedSettingsStateToHA();
+    if (!written) {
+        // The packet was queued for a later retry. Keep the wanted settings
+        // pending so the completion path can publish/reset exactly once.
+        this->wantedSettings.hasBeenSent = false;
+        ESP_LOGW(TAG, "wantedSettings write deferred; keeping pending state");
+        return;
+    }
 
-    // as soon as the packet is sent, we reset the settings
-    this->wantedSettings.resetSettings();
-
-    // as we've just sent a packet to the heatpump, we let it time for process
-    // this might not be necessary but, we give it a try because of issue #32
-    // https://github.com/echavet/MitsubishiCN105ESPHome/issues/32
-    this->loopCycle.deferCycle();
+    this->wantedSettings.hasBeenSent = true;
+    this->finish_write_(PendingWriteKind::SETTINGS, 0.0f, generation);
 }
 
 /**
@@ -382,11 +478,16 @@ void CN105Climate::sendRemoteTemperaturePacket() {
 
     ESP_LOGD(LOG_REMOTE_TEMP, "Sending remote temperature packet... -> %.1f%s",
         this->remoteTemperature_, temp_changed ? " (changed)" : " (keep-alive)");
-    writePacket(packet, PACKET_LEN);
-
-    // Update debounce tracking
-    this->last_remote_temp_send_ms_ = now;
-    this->last_remote_temp_sent_ = this->remoteTemperature_;
+    const float sent_value = this->remoteTemperature_;
+    const bool written = writePacket(packet, PACKET_LEN, true,
+                                     PendingWriteKind::REMOTE_TEMP, sent_value);
+    if (written) {
+        // Debounce tracking reflects an actual bus write (or a successful
+        // deferred write, handled by finish_write_).
+        this->finish_write_(PendingWriteKind::REMOTE_TEMP, sent_value, 0);
+    } else {
+        this->remote_temp_debounce_skip_count_ = 0;
+    }
 }
 
 void CN105Climate::sendRemoteTemperature() {
@@ -411,10 +512,15 @@ void CN105Climate::sendWantedRunStates() {
     uint8_t chkSum = checkSum(packet, 21);
     packet[21] = chkSum;
     ESP_LOGD(LOG_SET_RUN_STATE, "Sending set run state package (0x08)");
-    writePacket(packet, PACKET_LEN);
+    const uint32_t generation = this->wantedRunStates.generation;
+    const bool written = writePacket(packet, PACKET_LEN, true,
+                                     PendingWriteKind::RUN_STATES);
+    if (!written) {
+        this->wantedRunStates.hasBeenSent = false;
+        ESP_LOGW(TAG, "wantedRunStates write deferred; keeping pending state");
+        return;
+    }
 
-    this->publishWantedRunStatesStateToHA();
-
-    this->wantedRunStates.resetSettings();
-    this->loopCycle.deferCycle();
+    this->wantedRunStates.hasBeenSent = true;
+    this->finish_write_(PendingWriteKind::RUN_STATES, 0.0f, generation);
 }

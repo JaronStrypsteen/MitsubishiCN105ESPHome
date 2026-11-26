@@ -60,7 +60,9 @@ inline float decode_temperature(uint8_t enc_a, uint8_t enc_b, int offset = 10) {
 /// @param temperature  Target temperature in °C.
 /// @return             The encoded byte value for encoding B.
 inline uint8_t encode_temperature_b(float temperature) {
-    return static_cast<uint8_t>(std::round(temperature * 2.0f) + 128);
+    if (!std::isfinite(temperature)) return 0x90;  // 8 °C safe fallback
+    const float clamped = std::clamp(temperature, 10.0f, 31.0f);
+    return static_cast<uint8_t>(std::round(clamped * 2.0f) + 128);
 }
 
 /// Encode a remote temperature into the two-byte format used by SET remote temp packets.
@@ -71,7 +73,9 @@ inline uint8_t encode_temperature_b(float temperature) {
 /// @param[out] enc_a   Output: encoding A byte for the remote temp packet.
 /// @param[out] enc_b   Output: encoding B byte for the remote temp packet.
 inline void encode_remote_temperature(float temperature, uint8_t& enc_a, uint8_t& enc_b) {
-    float rounded = std::round(temperature * 2.0f);
+    // A non-finite sample must never wrap into a valid-looking byte pair.
+    const float clamped = std::isfinite(temperature) ? std::clamp(temperature, 10.0f, 31.5f) : 10.0f;
+    const float rounded = std::round(clamped * 2.0f);
     enc_a = static_cast<uint8_t>(rounded - 17);
     enc_b = static_cast<uint8_t>(rounded + 128);
 }

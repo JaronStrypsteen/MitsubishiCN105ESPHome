@@ -53,14 +53,13 @@ void CN105Climate::processDataPacket() {
 
     if (this->parser_.checksum_valid()) {
         ESP_LOGD("chkSum", "OK");
-        // checkpoint of a heatpump response
-        this->lastResponseMs = CUSTOM_MILLIS;
-
-        // processing the specific command
+        // `lastResponseMs` is a connection heartbeat, not an "any byte arrived"
+        // timestamp. Only awaited responses, ACKs and handshakes refresh it.
         processCommand();
     } else {
-        ESP_LOGW("chkSum", "KO -> checksum mismatch (cmd=0x%02X len=%d)",
-            this->parser_.command(), this->parser_.data_length());
+        ESP_LOGW("chkSum", "KO -> checksum mismatch (cmd=0x%02X len=%d received=0x%02X expected=0x%02X)",
+            this->parser_.command(), this->parser_.data_length(),
+            this->parser_.received_checksum(), this->parser_.expected_checksum());
         if (!this->isHeatpumpConnected()) {
             ESP_LOGD(LOG_CONN_TAG, "Checksum KO during handshake");
             this->hpPacketDebug(this->parser_.raw(), this->parser_.frame_size(), LOG_CONN_TAG);
@@ -82,8 +81,9 @@ void CN105Climate::getRoomTemperatureFromResponsePacket() {
     // Update the remote temperature control sensor (Issue 290)
     if (this->remote_temp_sensor_ != nullptr) {
         bool is_remote = false;
-        if (this->remote_temp_keepalive_active_ && this->remoteTemperature_ > 0) {
-            float diff = abs(receivedStatus.roomTemperature - this->remoteTemperature_);
+        if (this->remote_temp_keepalive_active_ && this->remoteTemperature_ > 0 &&
+            std::isfinite(receivedStatus.roomTemperature) && std::isfinite(this->remoteTemperature_)) {
+            float diff = std::fabs(receivedStatus.roomTemperature - this->remoteTemperature_);
             if (diff <= this->remote_temp_margin_) {
                 is_remote = true;
             }
@@ -126,13 +126,19 @@ void CN105Climate::getErrorInfoFromResponsePacket() {
     }
 }
 
-void CN105Climate::getDataFromResponsePacket() {
+bool CN105Climate::getDataFromResponsePacket() {
 
-    // D'abord, laissons l'orchestrateur traiter les codes connus
+    // Known late/unsolicited frames are decoded but do not advance the cycle
+    // or count as a fresh connection heartbeat.
     const uint8_t code = this->data[0];
-    if (this->scheduler_.process_response(code)) {
-        return;
+    const auto result = this->scheduler_.process_response(code);
+    if (result == RequestScheduler::ResponseResult::AWAITED) {
+        return true;
     }
+    if (result == RequestScheduler::ResponseResult::LATE) {
+        return false;
+    }
+
     // Sinon, switch pour les cas non gérés par l'orchestrateur
     switch (code) {
 
@@ -170,6 +176,7 @@ void CN105Climate::getDataFromResponsePacket() {
         break;
     }
 
+    return false;
 }
 
 void CN105Climate::updateSuccess() {
@@ -182,6 +189,7 @@ void CN105Climate::processCommand() {
     switch (this->parser_.command()) {
     case 0x61:  /* last update was successful */
         this->hpPacketDebug(this->parser_.raw(), this->parser_.frame_size(), LOG_ACK);
+        this->lastResponseMs = CUSTOM_MILLIS;
         this->updateSuccess();
         break;
 
@@ -213,7 +221,9 @@ void CN105Climate::processCommand() {
             break;
         }
 
-        this->getDataFromResponsePacket();
+        if (this->getDataFromResponsePacket()) {
+            this->lastResponseMs = CUSTOM_MILLIS;
+        }
         break;
     }
     case 0x7a:  // Standard handshake
@@ -239,6 +249,7 @@ void CN105Climate::handleConnectionSuccess() {
         this->parser_.command()
     );
     this->hpPacketDebug(this->parser_.raw(), this->parser_.frame_size(), LOG_CONN_TAG);
+    this->lastResponseMs = CUSTOM_MILLIS;
     this->setHeatpumpConnected(true);
     this->loopCycle.lastCompleteCycleMs = CUSTOM_MILLIS;
     // Reset cached settings so the first read after reconnect performs a full sync.

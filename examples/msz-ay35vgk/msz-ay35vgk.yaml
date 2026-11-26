@@ -57,6 +57,10 @@ climate:
     id: hp
     name: ${friendly_name}
     uart_id: HP_UART
+    model: "MSZ-AY35VGK"
+    uart_port: 2  # GPIO16/GPIO17 are UART2 on this board; do not infer from declaration order
+    boost_duration: 15min
+    strict_capabilities: true
     update_interval: 2s
     debounce_delay: 120ms
     remote_temperature_timeout: 30min

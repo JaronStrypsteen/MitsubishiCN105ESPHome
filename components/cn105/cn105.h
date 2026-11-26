@@ -55,6 +55,41 @@ namespace esphome {
 
     const char* driver_state_to_str(DriverState s);
 
+    // Deferred writes keep their completion action, so a queued SET can still
+    // publish optimistic state and clear its pending flags after it succeeds.
+    enum class PendingWriteKind : uint8_t {
+        GENERAL,
+        SETTINGS,
+        RUN_STATES,
+        REMOTE_TEMP,
+    };
+
+    struct PendingWrite {
+        uint8_t bytes[PACKET_LEN]{};
+        uint8_t length = 0;
+        bool check_is_active = true;
+        PendingWriteKind kind = PendingWriteKind::GENERAL;
+        float value = 0.0f;  // remote temperature payload, when applicable
+        uint32_t generation = 0;  // wantedSettings/wantedRunStates change token
+    };
+
+    // Exact-model capability manifest. Bits are mirrored by climate.py; keep the
+    // values stable because generated firmware stores them as a uint16_t.
+    enum class ModelCapability : uint16_t {
+        NIGHT_MODE = 1u << 0,
+        BOOST = 1u << 1,
+        SLEEP = 1u << 2,
+        ECO = 1u << 3,
+        AIR_PURIFIER = 1u << 4,
+        ISEE = 1u << 5,
+        AIRFLOW_CONTROL = 1u << 6,
+        TARGET_HUMIDITY = 1u << 7,
+        DUAL_SETPOINT = 1u << 8,
+        HARDWARE_SETTINGS_WRITES = 1u << 9,
+    };
+
+    static constexpr uint8_t MAX_PENDING_WRITES = 4;
+
     void log_info_uint32(const char* tag, const char* msg, uint32_t value, const char* suffix = "");
     void log_debug_uint32(const char* tag, const char* msg, uint32_t value, const char* suffix = "");
 
@@ -165,8 +200,8 @@ namespace esphome {
         bool compressor_frequency_report_when_idle_warning_shown_{ false };
 
         // The value of the code and value for the functions set.
-        int functions_code_;
-        int functions_value_;
+        int functions_code_ = 0;
+        int functions_value_ = 0;
 
         //select::Select* van_orientation;
 
@@ -230,6 +265,19 @@ namespace esphome {
         void set_baud_rate(int baud_rate);
         void set_tx_rx_pins(int tx_pin, int rx_pin);
         void set_uart_port(int uart_port) { this->uart_port_ = uart_port; }
+        void set_boost_duration(uint32_t duration_ms) { this->boost_duration_ms_ = duration_ms; }
+        void set_error_code_translations(const std::map<uint8_t, std::string>& translations) {
+            this->error_code_translations_ = translations;
+        }
+        void set_model_capability_manifest(const char* model, const char* source,
+                                           uint16_t supported_mask, uint16_t denied_mask,
+                                           bool strict) {
+            this->model_name_ = model != nullptr ? model : "";
+            this->capability_source_ = source != nullptr ? source : "unconfigured";
+            this->capability_supported_mask_ = supported_mask;
+            this->capability_denied_mask_ = denied_mask;
+            this->strict_capabilities_ = strict;
+        }
         //void set_wifi_connected_state(bool state);
         void setupUART();
         void disconnectUART();
@@ -386,7 +434,8 @@ namespace esphome {
         bool processInput(void);
         void processDataPacket();
         void getErrorInfoFromResponsePacket();
-    void getDataFromResponsePacket();
+        // Returns true only when an awaited INFO response completed a cycle step.
+        bool getDataFromResponsePacket();
         void getPowerFromResponsePacket(); //NET added
         void getSettingsFromResponsePacket();
         void getRoomTemperatureFromResponsePacket();
@@ -420,6 +469,7 @@ namespace esphome {
 
     private:
         friend struct cn105::CommonProtocol;
+        friend class cn105::Cn105ProtocolProfile;
         friend class cn105::HeatPumpProfile;
         friend class cn105::LossnayProfile;
         std::unique_ptr<cn105::Cn105ProtocolProfile> profile_;
@@ -432,7 +482,13 @@ namespace esphome {
         int lookupByteMapIndex(const char* valuesMap[], int len, const char* lookupValue, const char* debugInfo = "");
         int lookupByteMapIndex(const int valuesMap[], int len, int lookupValue, const char* debugInfo = "");
 
-        bool writePacket(uint8_t* packet, int length, bool checkIsActive = true);
+        bool writePacket(uint8_t* packet, int length, bool checkIsActive = true,
+                         PendingWriteKind kind = PendingWriteKind::GENERAL,
+                         float value = 0.0f);
+        bool enqueue_pending_write_(const uint8_t* packet, int length, bool checkIsActive,
+                                    PendingWriteKind kind, float value);
+        bool dequeue_pending_write_(PendingWrite& out);
+        void finish_write_(PendingWriteKind kind, float value, uint32_t generation);
         void prepareInfoPacket(uint8_t* packet, int length);
         void prepareSetPacket(uint8_t* packet, int length);
 
@@ -475,6 +531,11 @@ namespace esphome {
         void restorePreBoostState_();
         void createPacket(uint8_t* packet);
         void createInfoPacket(uint8_t* packet, uint8_t code);
+        void log_capability_manifest_() const;
+        void warn_if_capability_denied_(ModelCapability capability, const char* option) const;
+        bool capability_denied_(ModelCapability capability) const {
+            return (this->capability_denied_mask_ & static_cast<uint16_t>(capability)) != 0;
+        }
         heatpumpSettings currentSettings{};
         wantedHeatpumpSettings wantedSettings{};
         heatpumpRunStates currentRunStates{};
@@ -537,17 +598,25 @@ namespace esphome {
 
         // foundStart, bytesRead, dataLength, command → moved into parser_ (Phase 3A)
 
-        // Gestion sûre d'un paquet différé à écrire pour éviter la capture d'un buffer de pile
+        // Bounded FIFO for deferred writes: no stack-buffer capture and no
+        // single-slot loss when two commands arrive during a reconnect.
         void try_write_pending_packet();
-        uint8_t pending_packet_[PACKET_LEN] = {};
-        int pending_packet_len_ = 0;
-        bool pending_check_is_active_ = true;
-        bool has_pending_packet_ = false;
+        PendingWrite pending_writes_[MAX_PENDING_WRITES]{};
+        uint8_t pending_write_count_ = 0;
+        uint32_t boost_duration_ms_{ 15U * 60U * 1000U };
+
+        std::map<uint8_t, std::string> error_code_translations_;
+        std::string model_name_;
+        std::string capability_source_{ "unconfigured" };
+        uint16_t capability_supported_mask_ = 0;
+        uint16_t capability_denied_mask_ = 0;
+        bool strict_capabilities_ = false;
 
         // Connection lifecycle FSM
         DriverState state_ = DriverState::BOOT;
         uint32_t boot_ms_ = 0;
         uint32_t conn_bootstrap_delay_ms_{ 10000 };  // par défaut 10s
+        uint32_t last_bootstrap_attempt_ms_ = 0;
 
         bool installer_mode_{ false };
         bool installer_mode_effective_{ false };

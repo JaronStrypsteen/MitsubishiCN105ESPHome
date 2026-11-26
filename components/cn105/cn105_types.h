@@ -23,6 +23,15 @@ static const char* LOG_FUNCTIONS_TAG = "FUNCTIONS";
 static const char* LOG_HARDWARE_SELECT_TAG = "HardwareSelect";
 static const char* LOG_CONN_TAG = "CN105_CONN";
 
+inline bool cn105_float_equal(float lhs, float rhs) {
+    return (std::isnan(lhs) && std::isnan(rhs)) || lhs == rhs;
+}
+
+inline bool cn105_string_equal(const char* lhs, const char* rhs) {
+    if (lhs == nullptr || rhs == nullptr) return lhs == rhs;
+    return std::strcmp(lhs, rhs) == 0;
+}
+
 static const char* SHEDULER_REMOTE_TEMP_TIMEOUT = "->remote_temp_timeout";
 static const char* SCHEDULER_REMOTE_TEMP_KEEPALIVE = "->remote_temp_keepalive";
 static const char* SCHEDULER_BOOST_TIMEOUT = "cn105_boost_timer";
@@ -166,12 +175,19 @@ struct heatpumpSettings {
     heatpumpSettings& operator=(const heatpumpSettings& other) = default;
 
     bool operator==(const heatpumpSettings& other) const {
-        return power == other.power &&
-            mode == other.mode &&
-            temperature == other.temperature &&
-            fan == other.fan &&
-            vane == other.vane &&
-            wideVane == other.wideVane;
+        return cn105_string_equal(power, other.power) &&
+            cn105_string_equal(mode, other.mode) &&
+            cn105_float_equal(temperature, other.temperature) &&
+            cn105_float_equal(dual_low_target, other.dual_low_target) &&
+            cn105_float_equal(dual_high_target, other.dual_high_target) &&
+            cn105_string_equal(fan, other.fan) &&
+            cn105_string_equal(vane, other.vane) &&
+            cn105_string_equal(wideVane, other.wideVane) &&
+            iSee == other.iSee &&
+            connected == other.connected &&
+            cn105_string_equal(stage, other.stage) &&
+            cn105_string_equal(sub_mode, other.sub_mode) &&
+            cn105_string_equal(auto_sub_mode, other.auto_sub_mode);
     }
 
     bool operator!=(const heatpumpSettings& other) const {
@@ -184,6 +200,12 @@ struct wantedHeatpumpSettings : heatpumpSettings {
     bool hasBeenSent = false;
     uint8_t nb_deffered_requests = 0;
     long lastChange = 0;
+    // Monotonic token: incremented for every new user intent. A deferred write
+    // carries its token so completion cannot clear a newer pending change.
+    uint32_t generation = 0;
+    // Survives resetSettings(): used by the post-send grace window so an old
+    // SET does not keep suppressing genuine unit-reported setpoints forever.
+    uint32_t last_sent_ms = 0;
 
     // Last user-commanded values: persist across resetSettings() so that
     // subsequent SET packets (e.g. temp-only) still include these fields,
@@ -249,10 +271,11 @@ struct heatpumpStatus {
         return (std::isnan(roomTemperature) ? std::isnan(other.roomTemperature) : roomTemperature == other.roomTemperature) &&
             (std::isnan(outsideAirTemperature) ? std::isnan(other.outsideAirTemperature) : outsideAirTemperature == other.outsideAirTemperature) &&
             operating == other.operating &&
-            compressorFrequency == other.compressorFrequency &&
-            inputPower == other.inputPower &&
-            kWh == other.kWh &&
-            runtimeHours == other.runtimeHours;
+            cn105_float_equal(compressorFrequency, other.compressorFrequency) &&
+            cn105_float_equal(inputPower, other.inputPower) &&
+            cn105_float_equal(kWh, other.kWh) &&
+            cn105_float_equal(runtimeHours, other.runtimeHours) &&
+            timers == other.timers;
     }
 
     bool operator!=(const heatpumpStatus& other) const {
@@ -295,6 +318,8 @@ struct wantedHeatpumpRunStates : heatpumpRunStates {
     bool hasChanged = false;
     bool hasBeenSent = false;
     long lastChange = 0;
+    uint32_t generation = 0;
+    uint32_t last_sent_ms = 0;
 
     void resetSettings() {
         heatpumpRunStates::resetSettings();
@@ -319,10 +344,12 @@ inline void mark_wanted_settings_pending(wantedHeatpumpSettings& settings, long 
     settings.hasChanged = true;
     settings.hasBeenSent = false;
     settings.lastChange = now;
+    ++settings.generation;
 }
 
 inline void mark_wanted_run_states_pending(wantedHeatpumpRunStates& states, long now) {
     states.hasChanged = true;
     states.hasBeenSent = false;
     states.lastChange = now;
+    ++states.generation;
 }

@@ -76,33 +76,6 @@ DEPENDENCIES = ["uart"]  # Garder uart ici aussi
 _LOGGER = logging.getLogger(__name__)
 
 
-def _esphome_version_tuple():
-    """Parse ESPHome's version for API shims (issue #733)."""
-    version_str = None
-    try:
-        from esphome.const import __version__ as version_str
-    except ImportError:
-        try:
-            import esphome as _esphome
-
-            version_str = getattr(_esphome, "__version__", None)
-        except ImportError:
-            version_str = None
-    if not version_str:
-        # Unknown tree: emit the current (2025.11+) ClimateTraits API.
-        return (2026, 5, 0)
-    core = str(version_str).split("-", 1)[0]
-    parts = []
-    for part in core.split(".")[:3]:
-        try:
-            parts.append(int(part))
-        except ValueError:
-            parts.append(0)
-    while len(parts) < 3:
-        parts.append(0)
-    return tuple(parts)
-
-
 def _keepalive_interval(value):
     """Validate a keep-alive interval without ESPHome coercing 0s to 1ms.
 
@@ -113,9 +86,22 @@ def _keepalive_interval(value):
     """
     if isinstance(value, str) and value.strip().lower() == "never":
         value = "0ms"
-    # cv.update_interval() coerces 0ms to 1ms in newer ESPHome; the lower-level
-    # period validator keeps literal zero (and is available across 2025.11+).
-    return cv.All(cv.time_period, cv.time_period_in_milliseconds_)(value)
+    return cv.time_period(value)
+
+
+def _positive_time_period(value):
+    """Accept a time period but reject zero/negative durations."""
+    period = cv.time_period(value)
+    if period.total_milliseconds <= 0:
+        raise cv.Invalid("duration must be greater than zero")
+    return period
+
+
+def _nonempty_string(value):
+    value = cv.string(value).strip()
+    if not value:
+        raise cv.Invalid("value must not be empty")
+    return value
 
 
 def _custom_fan_modes(value):
@@ -126,11 +112,6 @@ def _custom_fan_modes(value):
     if "FULL" not in value:
         raise cv.Invalid("supports.custom_fan_mode must include FULL (currently the only implemented custom fan mode)")
     return value
-
-
-# Feature flags / FixedVector: ESPHome 2025.11.0. Old supports_* accessors
-# were removed in 2026.5.0. 2025.7.x (issue #733) needs the legacy setters.
-_HAS_CLIMATE_FEATURE_FLAGS = _esphome_version_tuple() >= (2025, 11, 0)
 
 CONF_SUPPORTS = "supports"
 CONF_SUPPORTS_HORIZONTAL_VANE_MODE = "horizontal_vane_mode"
@@ -184,6 +165,63 @@ CONF_TEMPERATURE_MARGIN = "temperature_margin"
 CONF_POWER_UNIT_IS_BTU = "power_unit_is_btu"
 CONF_REPORT_WHEN_IDLE = "report_when_idle"
 
+# Hidden/advanced options. These are valid but intentionally not shown in the
+# short README example; see the "Advanced options" section instead.
+CONF_UART_PORT = "uart_port"
+CONF_BOOST_DURATION = "boost_duration"
+CONF_ERROR_CODE_TRANSLATIONS = "error_code_translations"
+CONF_MODEL = "model"
+CONF_CAPABILITIES = "capabilities"
+CONF_STRICT_CAPABILITIES = "strict_capabilities"
+CONF_CAPABILITY_SUPPORTED = "supported"
+CONF_CAPABILITY_DENIED = "denied"
+CONF_CAPABILITY_SOURCE = "source"
+DEFAULT_BOOST_DURATION_MS = 15 * 60 * 1000
+DEFAULT_COIL_DRYING_DURATION_S = 15 * 60
+DEFAULT_REMOTE_TEMP_KEEPALIVE_MS = 20 * 1000
+
+# Bit values mirror esphome::cn105::ModelCapability in cn105.h. Keep stable:
+# generated firmware stores these as a uint16_t.
+CAPABILITY_BITS = {
+    "night_mode": 1 << 0,
+    "boost": 1 << 1,
+    "sleep": 1 << 2,
+    "eco": 1 << 3,
+    "air_purifier": 1 << 4,
+    "isee": 1 << 5,
+    "airflow_control": 1 << 6,
+    "target_humidity": 1 << 7,
+    "dual_setpoint": 1 << 8,
+    "hardware_settings_writes": 1 << 9,
+}
+CAPABILITY_NAMES = tuple(CAPABILITY_BITS)
+
+# Exact-model manifests only. VGKP evidence must not be copied here: the only
+# confirmed non-P quirk is that AY35VGK can report 0 Hz while operating.
+BUILTIN_CAPABILITY_MANIFESTS = {
+    "MSZ-AY35VGK": {
+        "source": "built-in exact-model",
+        "supported": ["night_mode", "boost", "sleep", "eco"],
+        "denied": [
+            "air_purifier",
+            "isee",
+            "airflow_control",
+            "target_humidity",
+            "dual_setpoint",
+            "hardware_settings_writes",
+        ],
+    }
+}
+
+OPTION_CAPABILITIES = {
+    CONF_NIGHT_MODE_SWITCH: "night_mode",
+    CONF_AIR_PURIFIER_SWITCH: "air_purifier",
+    CONF_ISEE_SENSOR: "isee",
+    CONF_AIRFLOW_CONTROL_SELECT: "airflow_control",
+    CONF_TARGET_HUMIDITY_SENSOR: "target_humidity",
+    CONF_HARDWARE_SETTINGS: "hardware_settings_writes",
+}
+
 CONF_DEFROST_SENSOR = "defrost_sensor"
 CONF_CUSTOM_FAN_MODE = "custom_fan_mode"
 DEFAULT_CUSTOM_FAN_MODES = ["FULL"]
@@ -223,6 +261,10 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_HORIZONTAL_SWING_SELECT,
     CONF_VERTICAL_SWING_SELECT,
     CONF_COMPRESSOR_FREQUENCY_SENSOR,
+    CONF_RUNTIME_HOURS_SENSOR,
+    CONF_OUTSIDE_AIR_TEMPERATURE_SENSOR,
+    CONF_DEFROST_SENSOR,
+    CONF_ERROR_CODE_SENSOR,
     CONF_ISEE_SENSOR,
     CONF_TARGET_HUMIDITY_SENSOR,
     CONF_FUNCTIONS_SENSOR,
@@ -238,6 +280,9 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_AIR_PURIFIER_SWITCH,
     CONF_NIGHT_MODE_SWITCH,
     CONF_CIRCULATOR_SWITCH,
+    CONF_POWER_SAVING_SWITCH,
+    CONF_COIL_DRYING_SWITCH,
+    CONF_COIL_DRYING_SENSOR,
     CONF_HARDWARE_SETTINGS,
     CONF_REMOTE_TEMPERATURE_CONTROL_SENSOR,
 }
@@ -479,6 +524,139 @@ HARDWARE_SETTING_SCHEMA = cv.Schema(
     }
 )
 
+CAPABILITY_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_CAPABILITY_SUPPORTED, default=[]): cv.ensure_list(
+            cv.one_of(*CAPABILITY_NAMES)
+        ),
+        cv.Optional(CONF_CAPABILITY_DENIED, default=[]): cv.ensure_list(
+            cv.one_of(*CAPABILITY_NAMES)
+        ),
+        cv.Optional(CONF_CAPABILITY_SOURCE, default="user"): _nonempty_string,
+    }
+)
+
+ERROR_CODE_TRANSLATIONS_SCHEMA = cv.Schema(
+    {cv.int_range(min=1, max=127): cv.string}
+)
+
+
+def resolve_capability_manifest(config):
+    """Merge built-in exact-model data with explicit user overrides."""
+    model = config.get(CONF_MODEL, "")
+    explicit = config.get(CONF_CAPABILITIES)
+    builtin = BUILTIN_CAPABILITY_MANIFESTS.get(model)
+
+    supported = list(builtin["supported"]) if builtin else []
+    denied = list(builtin["denied"]) if builtin else []
+    source = builtin["source"] if builtin else "unconfigured"
+
+    if explicit:
+        explicit_supported = explicit.get(CONF_CAPABILITY_SUPPORTED, [])
+        explicit_denied = explicit.get(CONF_CAPABILITY_DENIED, [])
+        supported = [name for name in supported if name not in explicit_denied]
+        denied = [name for name in denied if name not in explicit_supported]
+        supported.extend(name for name in explicit_supported if name not in supported)
+        denied.extend(name for name in explicit_denied if name not in denied)
+        if builtin:
+            source = f"built-in exact-model + {explicit.get(CONF_CAPABILITY_SOURCE, 'user')}"
+        else:
+            source = explicit.get(CONF_CAPABILITY_SOURCE, "user")
+
+    mask = 0
+    for name in supported:
+        mask |= CAPABILITY_BITS[name]
+    denied_mask = 0
+    for name in denied:
+        denied_mask |= CAPABILITY_BITS[name]
+
+    return {
+        "model": model,
+        "source": source,
+        "supported": supported,
+        "denied": denied,
+        "supported_mask": mask,
+        "denied_mask": denied_mask,
+    }
+
+
+def validate_capability_config(config):
+    explicit = config.get(CONF_CAPABILITIES)
+    strict = config.get(CONF_STRICT_CAPABILITIES, False)
+    model = config.get(CONF_MODEL, "")
+
+    if (explicit is not None or strict) and not model:
+        raise cv.Invalid("model is required when capabilities or strict_capabilities are configured")
+
+    if explicit:
+        overlap = sorted(
+            set(explicit.get(CONF_CAPABILITY_SUPPORTED, []))
+            & set(explicit.get(CONF_CAPABILITY_DENIED, []))
+        )
+        if overlap:
+            raise cv.Invalid(
+                "capabilities.supported and capabilities.denied overlap: "
+                + ", ".join(overlap)
+            )
+
+    if not strict:
+        return config
+
+    manifest = resolve_capability_manifest(config)
+    denied = set(manifest["denied"])
+    enabled = [
+        f"{option}={capability}"
+        for option, capability in OPTION_CAPABILITIES.items()
+        if option in config and capability in denied
+    ]
+    if config.get(CONF_SUPPORTS, {}).get(CONF_DUAL_SETPOINT, False) and "dual_setpoint" in denied:
+        enabled.append("supports.dual_setpoint=dual_setpoint")
+    if config.get(CONF_SUPPORTS, {}).get(CONF_CUSTOM_FAN_MODE, DEFAULT_CUSTOM_FAN_MODES) and "boost" in denied:
+        enabled.append("supports.custom_fan_mode=boost")
+
+    if enabled:
+        raise cv.Invalid(
+            "strict_capabilities rejected options denied by the manifest for model "
+            f"'{model}': {', '.join(enabled)}"
+        )
+
+    return config
+
+
+def validate_config_dependencies(config):
+    supports = config.get(CONF_SUPPORTS, {})
+    if supports.get(CONF_DUAL_SETPOINT, False):
+        modes = supports.get(CONF_MODE, DEFAULT_CLIMATE_MODES)
+        if "HEAT_COOL" not in modes:
+            raise cv.Invalid(
+                "supports.dual_setpoint requires HEAT_COOL in supports.mode"
+            )
+
+    if (
+        CONF_AIRFLOW_CONTROL_SELECT in config
+        and CONF_ISEE_SENSOR not in config
+    ):
+        raise cv.Invalid(
+            "airflow_control_select requires isee_sensor so the select has a real i-See state source"
+        )
+
+    if config.get(CONF_ERROR_CODE_TRANSLATIONS) and CONF_ERROR_CODE_SENSOR not in config:
+        _LOGGER.warning(
+            "error_code_translations is configured without error_code_sensor; no entity will show the translated text"
+        )
+
+    core_config = getattr(CORE, "config", None)
+    if (
+        core_config is not None
+        and len(core_config.get("uart", [])) > 1
+        and CONF_UART_PORT not in config
+    ):
+        _LOGGER.warning(
+            "Multiple UARTs configured. Set uart_port explicitly so low-level UART reinit targets the CN105 port."
+        )
+
+    return config
+
 
 def validate_lossnay_config(config):
     if not config.get(CONF_LOSSNAY, False):
@@ -535,6 +713,39 @@ def validate_lossnay_config(config):
 
     if supports.get(CONF_VANE_TYPE, "standard") != "standard":
         raise cv.Invalid("lossnay does not support vane types")
+
+    remote_temp_timeout = config.get(CONF_REMOTE_TEMP_TIMEOUT)
+    if remote_temp_timeout is not None:
+        # 2025.11 returns the integer sentinel 4294967295 for "never"; newer
+        # versions may return a TimePeriodMilliseconds wrapping that sentinel.
+        timeout_ms = getattr(remote_temp_timeout, "total_milliseconds", remote_temp_timeout)
+        if timeout_ms not in (0, 4294967295):
+            raise cv.Invalid("lossnay does not support remote temperature")
+    # The schema default (20s) is harmless because Lossnay has no remote
+    # temperature sensor; only reject a non-default, explicitly useful value.
+    keepalive = config.get(CONF_REMOTE_TEMP_KEEPALIVE_INTERVAL)
+    if keepalive is not None and getattr(
+        keepalive, "total_milliseconds", DEFAULT_REMOTE_TEMP_KEEPALIVE_MS
+    ) != DEFAULT_REMOTE_TEMP_KEEPALIVE_MS:
+        raise cv.Invalid("lossnay does not support remote temperature keep-alive")
+    fahrenheit_mode = config.get(CONF_FAHRENHEIT_SUPPORT_MODE, "disabled")
+    fahrenheit_value = getattr(
+        fahrenheit_mode,
+        "enum_value",
+        FAHRENHEIT_MODES.get(str(fahrenheit_mode).lower(), 0),
+    )
+    if fahrenheit_value:
+        raise cv.Invalid("lossnay does not support Fahrenheit compatibility tables")
+    if config.get(CONF_POWER_UNIT_IS_BTU, False):
+        raise cv.Invalid("lossnay does not support power_unit_is_btu")
+    if config.get(CONF_ERROR_CODE_TRANSLATIONS):
+        raise cv.Invalid("lossnay does not support error_code_translations")
+    boost_duration = config.get(CONF_BOOST_DURATION)
+    if boost_duration is not None and getattr(boost_duration, "total_milliseconds", DEFAULT_BOOST_DURATION_MS) != DEFAULT_BOOST_DURATION_MS:
+        raise cv.Invalid("lossnay does not support presets, so boost_duration cannot be changed")
+    coil_duration = config.get(CONF_COIL_DRYING_DURATION)
+    if coil_duration is not None and getattr(coil_duration, "total_seconds", DEFAULT_COIL_DRYING_DURATION_S) != DEFAULT_COIL_DRYING_DURATION_S:
+        raise cv.Invalid("lossnay does not support coil drying, so coil_drying_duration cannot be changed")
 
     return config
 
@@ -623,6 +834,14 @@ CONFIG_SCHEMA = (
             ): REMOTE_TEMPERATURE_CONTROL_SENSOR_SCHEMA,
             #cv.Optional(CONF_REMOTE_TEMPERATURE_MARGIN, default=0.4): cv.positive_float,
             cv.Optional(CONF_POWER_UNIT_IS_BTU, default=False): cv.boolean,
+            cv.Optional(CONF_UART_PORT): cv.int_range(min=0, max=2),
+            cv.Optional(CONF_BOOST_DURATION, default="15min"): _positive_time_period,
+            cv.Optional(
+                CONF_ERROR_CODE_TRANSLATIONS, default={}
+            ): ERROR_CODE_TRANSLATIONS_SCHEMA,
+            cv.Optional(CONF_MODEL): _nonempty_string,
+            cv.Optional(CONF_CAPABILITIES): CAPABILITY_SCHEMA,
+            cv.Optional(CONF_STRICT_CAPABILITIES, default=False): cv.boolean,
             # mode/fan_mode/swing_mode defaults depend on the profile and are applied in to_code.
             cv.Optional(CONF_SUPPORTS, default={}): cv.Schema(
                 {
@@ -656,7 +875,12 @@ CONFIG_SCHEMA = (
     .extend(cv.COMPONENT_SCHEMA)
 )
 
-CONFIG_SCHEMA = cv.All(CONFIG_SCHEMA, validate_lossnay_config)
+CONFIG_SCHEMA = cv.All(
+    CONFIG_SCHEMA,
+    validate_config_dependencies,
+    validate_capability_config,
+    validate_lossnay_config,
+)
 
 
 @coroutine
@@ -673,10 +897,52 @@ def to_code(config):
     cg.add(uart_var.set_stop_bits(1))
 
     uart_id_str_for_lookup = str(uart_id_object)
+    core_config = getattr(CORE, "config", None)
+    if (
+        core_config is not None
+        and len(core_config.get("uart", [])) > 1
+        and CONF_UART_PORT not in config
+    ):
+        _LOGGER.warning(
+            "Multiple UARTs configured. Set uart_port explicitly so low-level UART reinit targets the CN105 port."
+        )
     tx_pin, rx_pin = get_uart_pins_from_config(CORE.config, uart_id_str_for_lookup)
     cg.add(var.set_tx_rx_pins(tx_pin, rx_pin))
-    uart_port_index = get_uart_port_index(CORE.config, uart_id_str_for_lookup)
-    cg.add(var.set_uart_port(uart_port_index))
+    if CONF_UART_PORT in config:
+        cg.add(var.set_uart_port(config[CONF_UART_PORT]))
+    else:
+        uart_port_index = get_uart_port_index(CORE.config, uart_id_str_for_lookup)
+        cg.add(var.set_uart_port(uart_port_index))
+
+    cg.add(
+        var.set_boost_duration(
+            int(config[CONF_BOOST_DURATION].total_milliseconds)
+        )
+    )
+
+    translations = config.get(CONF_ERROR_CODE_TRANSLATIONS, {})
+    if translations:
+        map_entries = ", ".join(
+            f"{{{int(code)}, {cg.safe_exp(str(label))}}}"
+            for code, label in translations.items()
+        )
+        cg.add(
+            var.set_error_code_translations(
+                cg.RawExpression(f"std::map<uint8_t, std::string>{{{map_entries}}}")
+            )
+        )
+
+    manifest = resolve_capability_manifest(config)
+    if config.get(CONF_MODEL) or CONF_CAPABILITIES in config or config.get(CONF_STRICT_CAPABILITIES, False):
+        cg.add(
+            var.set_model_capability_manifest(
+                cg.safe_exp(manifest["model"]),
+                cg.safe_exp(manifest["source"]),
+                manifest["supported_mask"],
+                manifest["denied_mask"],
+                config.get(CONF_STRICT_CAPABILITIES, False),
+            )
+        )
 
     # Empty list means use all options from WIDEVANE_MAP (C++ is source of truth)
     horizontal_vane_options = []
@@ -721,13 +987,10 @@ def to_code(config):
         yaml_dual = supports.get(CONF_DUAL_SETPOINT, False)
 
         if yaml_dual:
-            if _HAS_CLIMATE_FEATURE_FLAGS:
-                dual_flag = cg.RawExpression(
-                    "climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE"
-                )
-                cg.add(traits.add_feature_flags(dual_flag))
-            else:
-                cg.add(traits.set_supports_two_point_target_temperature(True))
+            dual_flag = cg.RawExpression(
+                "climate::CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE"
+            )
+            cg.add(traits.add_feature_flags(dual_flag))
 
         # Note: If yaml_dual is False, we simply do NOT set the dual-setpoint trait.
 
@@ -901,7 +1164,11 @@ def to_code(config):
         cg.add(var.set_power_saving_switch(switch_var))
 
     if CONF_COIL_DRYING_DURATION in config:
-        cg.add(var.set_coil_drying_duration(config[CONF_COIL_DRYING_DURATION]))
+        cg.add(
+            var.set_coil_drying_duration(
+                int(config[CONF_COIL_DRYING_DURATION].total_seconds)
+            )
+        )
 
     if CONF_COIL_DRYING_SWITCH in config:
         switch_var = yield switch.new_switch(config[CONF_COIL_DRYING_SWITCH])
