@@ -55,6 +55,10 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
     this->traits_.set_visual_max_temperature(ESPMHP_MAX_TEMPERATURE);
     this->traits_.set_visual_temperature_step(ESPMHP_TEMPERATURE_STEP);
 
+    if (!lossnay) {
+        this->traits_.set_supported_custom_fan_modes({"FULL"});
+    }
+
 
     // state_ is initialized to BOOT in the header
     this->functions = heatpumpFunctions();

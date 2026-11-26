@@ -173,7 +173,7 @@ void CN105Climate::debugClimate(const char* settingName) {
         settingName,
         LOG_STR_ARG(climate_mode_to_string(this->mode)), // Utilisation de LOG_STR_ARG
         this->getTargetTemperatureInCurrentMode(),
-        this->fan_mode.has_value() ? LOG_STR_ARG(climate_fan_mode_to_string(this->fan_mode.value())) : "-",
+        this->fan_mode.has_value() ? LOG_STR_ARG(climate_fan_mode_to_string(this->fan_mode.value())) : (this->custom_fan_mode.has_value() ? this->custom_fan_mode.value().c_str() : "-"),
         LOG_STR_ARG(climate_swing_mode_to_string(this->swing_mode)));
 }
 

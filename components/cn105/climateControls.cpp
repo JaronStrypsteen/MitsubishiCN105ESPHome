@@ -101,10 +101,21 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
 }
 
 bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
+    if (call.get_custom_fan_mode().has_value()) {
+        const std::string custom_mode = *call.get_custom_fan_mode();
+        if (custom_mode == "FULL") {
+            ESP_LOGD("control", "Custom fan mode FULL asked");
+            this->custom_fan_mode = "FULL";
+            this->fan_mode.reset();
+            this->setFanSpeed("4");
+            return true;
+        }
+    }
     if (!call.get_fan_mode().has_value()) {
         return false;
     }
     ESP_LOGD("control", "Fan change asked");
+    this->custom_fan_mode.reset();
     this->fan_mode = *call.get_fan_mode();
     this->controlFan();
     return true;
