@@ -98,6 +98,19 @@ def _positive_time_period(value):
     return period
 
 
+BOOST_DURATION_OPTIONS_MINUTES = (5, 10, 15, 30, 45, 60)
+BOOST_DURATION_OPTIONS = tuple(f"{minutes} min" for minutes in BOOST_DURATION_OPTIONS_MINUTES)
+
+
+def format_boost_duration_option(duration_ms):
+    """Format a duration as the label used by boost_duration_select."""
+    if duration_ms % 60000 == 0:
+        return f"{duration_ms // 60000} min"
+    if duration_ms % 1000 == 0:
+        return f"{duration_ms // 1000} s"
+    return f"{duration_ms} ms"
+
+
 def _nonempty_string(value):
     value = cv.string(value).strip()
     if not value:
@@ -271,6 +284,7 @@ CONF_REPORT_WHEN_IDLE = "report_when_idle"
 # short README example; see the "Advanced options" section instead.
 CONF_UART_PORT = "uart_port"
 CONF_BOOST_DURATION = "boost_duration"
+CONF_BOOST_DURATION_SELECT = "boost_duration_select"
 CONF_ERROR_CODE_TRANSLATIONS = "error_code_translations"
 CONF_MODEL = "model"
 CONF_CAPABILITIES = "capabilities"
@@ -365,6 +379,7 @@ BUILTIN_CAPABILITY_MANIFESTS = {
 OPTION_CAPABILITIES = {
     CONF_NIGHT_MODE_SWITCH: "night_mode",
     CONF_AIR_PURIFIER_SWITCH: "air_purifier",
+    CONF_BOOST_DURATION_SELECT: "boost",
     CONF_ISEE_SENSOR: "isee",
     CONF_AIRFLOW_CONTROL_SELECT: "airflow_control",
     CONF_TARGET_HUMIDITY_SENSOR: "target_humidity",
@@ -428,6 +443,7 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_REMOTE_TEMP_SOURCE,
     CONF_AIRFLOW_CONTROL_SELECT,
     CONF_AIR_PURIFIER_SWITCH,
+    CONF_BOOST_DURATION_SELECT,
     CONF_NIGHT_MODE_SWITCH,
     CONF_CIRCULATOR_SWITCH,
     CONF_POWER_SAVING_SWITCH,
@@ -443,6 +459,9 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
 # Définitions des classes C++ (identiques à votre version)
 VaneOrientationSelect = cg.global_ns.class_(
     "VaneOrientationSelect", select.Select, cg.Component
+)
+BoostDurationSelect = cg.global_ns.class_(
+    "BoostDurationSelect", select.Select, cg.Component
 )
 CompressorFrequencySensor = cg.global_ns.class_(
     "CompressorFrequencySensor", sensor.Sensor, cg.Component
@@ -535,6 +554,11 @@ def get_uart_port_index(core_config, target_uart_id_str):
 # Schémas pour les entités optionnelles (identiques à votre version)
 SELECT_SCHEMA = select.select_schema(VaneOrientationSelect).extend(
     {cv.GenerateID(CONF_ID): cv.declare_id(VaneOrientationSelect)}
+)
+BOOST_DURATION_SELECT_SCHEMA = select.select_schema(
+    BoostDurationSelect,
+    icon="mdi:timer-sand",
+    entity_category=ENTITY_CATEGORY_CONFIG,
 )
 COMPRESSOR_FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
     CompressorFrequencySensor,
@@ -1053,6 +1077,9 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_POWER_UNIT_IS_BTU, default=False): cv.boolean,
             cv.Optional(CONF_UART_PORT): cv.int_range(min=0, max=2),
             cv.Optional(CONF_BOOST_DURATION, default="15min"): _positive_time_period,
+            cv.Optional(
+                CONF_BOOST_DURATION_SELECT
+            ): BOOST_DURATION_SELECT_SCHEMA,
             cv.Optional(CONF_AWAY_TEMPERATURE, default=10.0): cv.All(
                 cv.temperature, cv.float_range(min=10.0, max=25.0)
             ),
@@ -1134,11 +1161,28 @@ def to_code(config):
         uart_port_index = get_uart_port_index(CORE.config, uart_id_str_for_lookup)
         cg.add(var.set_uart_port(uart_port_index))
 
-    cg.add(
-        var.set_boost_duration(
-            int(config[CONF_BOOST_DURATION].total_milliseconds)
+    boost_duration_ms = int(config[CONF_BOOST_DURATION].total_milliseconds)
+    cg.add(var.set_boost_duration(boost_duration_ms))
+
+    if CONF_BOOST_DURATION_SELECT in config:
+        initial_option = format_boost_duration_option(boost_duration_ms)
+        options = list(BOOST_DURATION_OPTIONS)
+        if initial_option not in options:
+            options.append(initial_option)
+        boost_duration_select_var = yield select.new_select(
+            config[CONF_BOOST_DURATION_SELECT], options=[]
         )
-    )
+        options_vector = cg.RawExpression(
+            "std::vector<std::string>" + str(cg.safe_exp(options))
+        )
+        cg.add(
+            var.set_boost_duration_select(
+                boost_duration_select_var,
+                options_vector,
+                cg.safe_exp(initial_option),
+            )
+        )
+
     cg.add(var.set_away_temperature(config[CONF_AWAY_TEMPERATURE]))
 
     translations = config.get(CONF_ERROR_CODE_TRANSLATIONS, {})

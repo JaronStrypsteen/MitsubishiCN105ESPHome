@@ -315,6 +315,7 @@ void CN105Climate::dump_config() {
     LOG_SELECT("  ", "Vertical Vane", this->vertical_vane_select_);
     LOG_SELECT("  ", "Horizontal Vane", this->horizontal_vane_select_);
     LOG_SELECT("  ", "Airflow Control", this->airflow_control_select_);
+    LOG_SELECT("  ", "Boost Duration", this->boost_duration_select_);
 
     LOG_SWITCH("  ", "Air Purifier", this->air_purifier_switch_);
     LOG_SWITCH("  ", "Night Mode", this->night_mode_switch_);

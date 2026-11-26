@@ -427,6 +427,34 @@ void CN105Climate::update_boost_remaining_(uint32_t remaining_s) {
     }
 }
 
+void CN105Climate::restart_boost_countdown_() {
+    // Named char* timers use ESPHome's skip-cancel path. Cancel explicitly so
+    // reactivating BOOST or changing its duration cannot leave an old timeout
+    // or countdown interval running.
+    this->cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+    this->cancel_interval("boost_countdown");
+
+    this->boost_start_time_ms_ = CUSTOM_MILLIS;
+    this->update_boost_remaining_(this->boost_duration_ms_ / 1000);
+
+    this->set_interval("boost_countdown", 1000, [this]() {
+        if (!this->boost_active_) {
+            this->cancel_interval("boost_countdown");
+            this->update_boost_remaining_(0);
+            return;
+        }
+        uint32_t elapsed_ms = CUSTOM_MILLIS - this->boost_start_time_ms_;
+        uint32_t rem_s = (elapsed_ms < this->boost_duration_ms_) ?
+            ((this->boost_duration_ms_ - elapsed_ms) / 1000) : 0;
+        this->update_boost_remaining_(rem_s);
+    });
+
+    this->set_timeout(SCHEDULER_BOOST_TIMEOUT, this->boost_duration_ms_, [this]() {
+        ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
+        this->restorePreBoostState_();
+    });
+}
+
 void CN105Climate::restorePreAwayState_() {
     if (!this->away_active_) return;
     this->away_active_ = false;
@@ -527,24 +555,7 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
         this->fan_mode.reset();
         this->setFanSpeed("4");
 
-        this->boost_start_time_ms_ = CUSTOM_MILLIS;
-        this->update_boost_remaining_(this->boost_duration_ms_ / 1000);
-        this->set_interval("boost_countdown", 1000, [this]() {
-            if (!this->boost_active_) {
-                this->cancel_interval("boost_countdown");
-                this->update_boost_remaining_(0);
-                return;
-            }
-            uint32_t elapsed_ms = CUSTOM_MILLIS - this->boost_start_time_ms_;
-            uint32_t rem_s = (elapsed_ms < this->boost_duration_ms_) ?
-                ((this->boost_duration_ms_ - elapsed_ms) / 1000) : 0;
-            this->update_boost_remaining_(rem_s);
-        });
-
-        this->set_timeout(SCHEDULER_BOOST_TIMEOUT, this->boost_duration_ms_, [this]() {
-            ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
-            this->restorePreBoostState_();
-        });
+        this->restart_boost_countdown_();
     } else {
         if (preset == climate::CLIMATE_PRESET_SLEEP) {
             ESP_LOGI("preset", "Activating SLEEP mode (Quiet fan + Night Mode)");

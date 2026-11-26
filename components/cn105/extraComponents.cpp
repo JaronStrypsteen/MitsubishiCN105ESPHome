@@ -1,8 +1,40 @@
 #include "cn105.h"
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <limits>
 #include <esphome/core/helpers.h>
 
 using namespace esphome;
+
+namespace {
+
+uint32_t parse_boost_duration_option(const std::string& value) {
+    unsigned long amount = 0;
+    char unit[16] = {0};
+    if (std::sscanf(value.c_str(), "%lu %15s", &amount, unit) != 2 || amount == 0) {
+        return 0;
+    }
+
+    uint64_t duration_ms = 0;
+    if (std::strcmp(unit, "min") == 0) {
+        duration_ms = static_cast<uint64_t>(amount) * 60000ULL;
+    } else if (std::strcmp(unit, "s") == 0) {
+        duration_ms = static_cast<uint64_t>(amount) * 1000ULL;
+    } else if (std::strcmp(unit, "ms") == 0) {
+        duration_ms = static_cast<uint64_t>(amount);
+    } else {
+        return 0;
+    }
+
+    if (duration_ms == 0 || duration_ms > std::numeric_limits<uint32_t>::max()) {
+        return 0;
+    }
+    return static_cast<uint32_t>(duration_ms);
+}
+
+}  // namespace
 
 
 void CN105Climate::generateExtraComponents() {
@@ -91,6 +123,52 @@ void CN105Climate::set_airflow_control_select(
             }
         }
         });
+}
+
+void CN105Climate::set_boost_duration_select(
+    BoostDurationSelect* boost_duration_select,
+    const std::vector<std::string>& options,
+    const std::string& initial_option) {
+
+    this->boost_duration_select_ = boost_duration_select;
+
+    // Keep the backing strings alive: SelectTraits stores const char* pointers.
+    this->boost_duration_options_ = options;
+    cn105_set_select_options(this->boost_duration_select_->traits,
+                             this->boost_duration_options_);
+
+    this->boost_duration_select_->setCallbackFunction([this](const std::string& value) {
+        const uint32_t duration_ms = parse_boost_duration_option(value);
+        if (duration_ms == 0) {
+            ESP_LOGW("preset", "Ignoring invalid BOOST duration option: %s", value.c_str());
+            return;
+        }
+        this->set_boost_duration_runtime(duration_ms);
+        });
+
+    this->boost_duration_select_->publish_state(initial_option);
+}
+
+void CN105Climate::set_boost_duration_runtime(uint32_t duration_ms) {
+    if (duration_ms == 0 || duration_ms == this->boost_duration_ms_) {
+        return;
+    }
+
+    this->boost_duration_ms_ = duration_ms;
+    if (duration_ms >= 60000) {
+        ESP_LOGI("preset", "BOOST duration set to %u min",
+                 static_cast<unsigned>(duration_ms / 60000));
+    } else {
+        ESP_LOGI("preset", "BOOST duration set to %u s",
+                 static_cast<unsigned>(duration_ms / 1000));
+    }
+
+    // A duration change during an active BOOST must restart the countdown and
+    // replace the already scheduled timeout, otherwise the old timeout wins.
+    if (this->boost_active_) {
+        ESP_LOGI("preset", "BOOST is active; restarting countdown with new duration");
+        this->restart_boost_countdown_();
+    }
 }
 
 void CN105Climate::set_compressor_frequency_sensor(

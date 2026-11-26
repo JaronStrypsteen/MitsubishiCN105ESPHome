@@ -7,6 +7,7 @@
 #include "esphome/components/uart/uart.h"
 #include "heatpumpFunctions.h"
 #include "van_orientation_select.h"
+#include "boost_duration_select.h"
 #include "uptime_connection_sensor.h"
 #include "compressor_frequency_sensor.h"
 #include "target_humidity_sensor.h"
@@ -131,6 +132,9 @@ namespace esphome {
         void set_vertical_vane_select(VaneOrientationSelect* vertical_vane_select);
         void set_horizontal_vane_select(VaneOrientationSelect* horizontal_vane_select, const std::vector<std::string>& options = {});
         void set_airflow_control_select(VaneOrientationSelect* airflow_control_select);
+        void set_boost_duration_select(BoostDurationSelect* boost_duration_select,
+                                       const std::vector<std::string>& options,
+                                       const std::string& initial_option);
         void set_compressor_frequency_sensor(esphome::sensor::Sensor* compressor_frequency_sensor);
         void set_compressor_frequency_report_when_idle(bool value);
         void set_target_humidity_sensor(esphome::sensor::Sensor* target_humidity_sensor);
@@ -180,6 +184,8 @@ namespace esphome {
         void set_boost_remaining_sensor(sensor::Sensor* s) { this->boost_remaining_sensor_ = s; }
         void set_boost_remaining_time_sensor(text_sensor::TextSensor* s) { this->boost_remaining_time_sensor_ = s; }
         void update_boost_remaining_(uint32_t remaining_s);
+        void set_boost_duration_runtime(uint32_t duration_ms);
+        void restart_boost_countdown_();
         void restorePreAwayState_();
 
         void add_hardware_setting(HardwareSettingSelect* setting);
@@ -289,6 +295,9 @@ namespace esphome {
         std::vector<std::string> horizontal_vane_options_strings_;  // Store strings for horizontal vane options
         VaneOrientationSelect* airflow_control_select_ =
             nullptr;
+        BoostDurationSelect* boost_duration_select_ =
+            nullptr;
+        std::vector<std::string> boost_duration_options_;
         sensor::Sensor* compressor_frequency_sensor_ =
             nullptr;  // Sensor to store compressor frequency
         sensor::Sensor* target_humidity_sensor_ =

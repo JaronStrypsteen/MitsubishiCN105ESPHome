@@ -7,7 +7,7 @@ The tuned example is [`examples/msz-ay35vgk/msz-ay35vgk.yaml`](../examples/msz-a
 ## What is enabled by default
 
 - Standard modes, fan speeds, vertical swing, and the `FULL` custom fan mode.
-- `BOOST`, `SLEEP`, and `ECO` presets. These are registered automatically for non-Lossnay climate entities. `SLEEP` drives the Mitsubishi NIGHT MODE bit; `BOOST` restores the saved fan/setpoint after `boost_duration` (15 minutes by default).
+- `BOOST`, `SLEEP`, and `ECO` presets. These are registered automatically for non-Lossnay climate entities. `SLEEP` drives the Mitsubishi NIGHT MODE bit; `BOOST` restores the saved fan/setpoint after `boost_duration` (15 minutes by default). Add `boost_duration_select` to change that duration from Home Assistant; changing it while BOOST is active restarts the countdown.
 - `night_mode_switch`, disabled by default in Home Assistant. Enable it after you confirm the `0x42` packet changes when you toggle it.
 - Diagnostic entities, disabled by default: defrost, error code, runtime hours, input power, kWh, stage, sub-mode, auto sub-mode, outside air temperature, and compressor frequency.
 

@@ -368,6 +368,23 @@ Non-Lossnay climate entities advertise `NONE`, `BOOST`, `SLEEP`, `ECO`, and `AWA
 > [!NOTE]
 > `BOOST` requires the `FULL` custom fan mode. Keep `supports.custom_fan_mode: [FULL]` (the default) if you use presets.
 
+#### Boost duration select
+
+Add `boost_duration_select` to expose the BOOST duration as a native ESPHome select in Home Assistant:
+
+```yaml
+climate:
+  - platform: cn105
+    id: hp
+    boost_duration: 15min
+    boost_duration_select:
+      name: Boost Duration
+```
+
+The select offers `5 min`, `10 min`, `15 min`, `30 min`, `45 min`, and `60 min`. Its initial state follows `boost_duration` (`15 min` by default). If you configure a non-standard `boost_duration`, that value is appended as an extra option so the initial state stays accurate.
+
+Changing the select while BOOST is active restarts the countdown and the remaining-time sensors immediately show the newly selected duration.
+
 #### Defrost sensor
 
 Add `defrost_sensor` to expose the heat pump's defrost/preheat sub-mode as a diagnostic binary sensor. The decoder ignores the filter-reminder bit (`0x01`) when other sub-mode bits are set, so `0x03` is reported as DEFROST rather than being confused with the reminder. Many units never report this state; leave the entity disabled if it never changes on yours.
@@ -402,7 +419,8 @@ These options are supported but left out of the short example above. They are us
 | Option | Purpose |
 | ------ | ------- |
 | `uart_port` | Explicit controller index (`0`, `1`, or `2`) used by the ESP32 Arduino low-level UART reinit. Without it the component infers the index from UART declaration order, which can be wrong. Set it when CN105 is not on the first declared UART. |
-| `boost_duration` | How long `BOOST` keeps the `FULL` fan and raised setpoint before restoring the previous state. Default `15min`. Requires `supports.custom_fan_mode: [FULL]` (the default). |
+| `boost_duration` | Compile-time default for how long `BOOST` keeps the `FULL` fan and raised setpoint before restoring the previous state. Default `15min`. Requires `supports.custom_fan_mode: [FULL]` (the default). |
+| `boost_duration_select` | Native ESPHome select for changing the BOOST duration at runtime (`5`, `10`, `15`, `30`, `45`, or `60 min`). Its initial value follows `boost_duration`; changes while BOOST is active restart the countdown. |
 | `away_temperature` | Target freeze-protection temperature used by the `AWAY` preset (`10.0`–`25.0 °C`). Default `10.0`. |
 | `native_five_speed_fan` | Map indoor units with 5 native fan steps (Quiet + 1..4) so speed `3` maps to `MIDDLE` and speed `4` maps to `HIGH`. Default `false`. |
 | `power_unit_is_btu` | Set to `true` for models (e.g. some `MSZ-LN` firmware) that report raw input power in BTU/s and energy in kBTU instead of Watts and kWh/10. Default `false`. |
@@ -424,6 +442,7 @@ These options are supported but left out of the short example above. They are us
 | `timer_mode_sensor` / `on_timer_sensor` / `off_timer_sensor` | `text_sensor` / `sensor` | Expose hardware `0x05` timer mode (`NONE`, `OFF`, `ON`, `BOTH`) and remaining ON/OFF minutes. |
 | `filter_dirty_sensor` | `binary_sensor` | Exposes dirty-filter maintenance alert (`0x10` on heat pumps, `0x06` on Lossnay). |
 | `connection_status_sensor` | `binary_sensor` | Connectivity diagnostic indicating whether the CN105 handshake is currently `CONNECTED`. |
+| `boost_duration_select` | `select` | Runtime BOOST duration selector with preset minute options. |
 | `boost_remaining_sensor` / `boost_remaining_time_sensor` | `sensor` / `text_sensor` | Remaining `BOOST` time in seconds or formatted `Xm YYs`. |
 | `checksum_error_sensor` / `packet_drop_sensor` / `retransmission_sensor` | `sensor` | Monotonic UART protocol health counters. |
 | `remote_temperature_control_sensor` | `binary_sensor` | Confirms whether the unit's reported room temp tracks the active remote temperature within `temperature_margin` (default `0.4 °C`). |
