@@ -59,7 +59,8 @@ TEST(HeatPumpProfile, OperatingAndStageFallback) {
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, false, "HIGH", CLIMATE_ACTION_HEATING), CLIMATE_ACTION_IDLE);
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, true, "IDLE", CLIMATE_ACTION_COOLING), CLIMATE_ACTION_IDLE);
     EXPECT_EQ(HeatPumpProtocol::operating_action(false, true, nullptr, CLIMATE_ACTION_COOLING), CLIMATE_ACTION_IDLE);
-    EXPECT_EQ(HeatPumpProtocol::operating_action(true, false, nullptr, CLIMATE_ACTION_HEATING, 0.0f), CLIMATE_ACTION_IDLE);
+    // A 0 Hz report must not override an operating unit (AY35VGK reports 0 Hz while running).
+    EXPECT_EQ(HeatPumpProtocol::operating_action(true, false, nullptr, CLIMATE_ACTION_HEATING, 0.0f), CLIMATE_ACTION_HEATING);
     EXPECT_EQ(HeatPumpProtocol::operating_action(true, false, nullptr, CLIMATE_ACTION_HEATING, 28.0f), CLIMATE_ACTION_HEATING);
 }
 

@@ -249,9 +249,10 @@ struct HeatPumpProtocol {
     static climate::ClimateAction operating_action(bool operating, bool use_stage, const char* stage,
                                                     climate::ClimateAction active_action,
                                                     float compressor_freq = NAN) {
-        if (!std::isnan(compressor_freq) && compressor_freq == 0.0f) {
-            return climate::CLIMATE_ACTION_IDLE;
-        }
+        // A 0 Hz report is not proof of an idle unit: the AY35VGK reports 0 Hz while
+        // `operating: YES` during startup/defrost and in fan/dry runs. Trust the
+        // operating flag and stage instead of forcing IDLE from the frequency.
+        (void) compressor_freq;
         const bool stage_idle = use_stage && stage != nullptr && std::strcmp(stage, STAGE_MAP[0]) == 0;
         if (stage_idle) {
             return climate::CLIMATE_ACTION_IDLE;
