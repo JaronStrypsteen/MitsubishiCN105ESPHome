@@ -53,3 +53,12 @@ TEST(OptimizedLookupTest, StdOptionalLookupFastPath) {
     auto opt_null = cn105_protocol::lookup_index_opt(POWER_MAP, 2, nullptr);
     EXPECT_FALSE(opt_null.has_value());
 }
+
+TEST(BoostRemainingTest, FormatsMinutesAndSeconds) {
+    uint32_t remaining_s = 875; // 14 mins and 35 secs
+    uint32_t mins = remaining_s / 60;
+    uint32_t secs = remaining_s % 60;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%um %02us", (unsigned)mins, (unsigned)secs);
+    EXPECT_STREQ(buf, "14m 35s");
+}

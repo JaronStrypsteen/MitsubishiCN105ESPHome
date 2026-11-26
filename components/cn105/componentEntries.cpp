@@ -46,6 +46,7 @@ void CN105Climate::setup() {
     if (this->coil_drying_sensor_ != nullptr) {
         this->coil_drying_sensor_->publish_state(false);
     }
+    this->update_boost_remaining_(0);
     this->parser_.reset();
     this->lastResponseMs = CUSTOM_MILLIS;
 

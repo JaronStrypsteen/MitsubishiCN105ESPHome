@@ -151,6 +151,9 @@ namespace esphome {
         void set_level_shifter_enable_pin(GPIOPin* pin) { this->level_shifter_enable_pin_ = pin; }
         void set_native_five_speed_fan(bool enabled) { this->native_five_speed_fan_ = enabled; }
         bool is_native_five_speed_fan() const { return this->native_five_speed_fan_; }
+        void set_boost_remaining_sensor(sensor::Sensor* s) { this->boost_remaining_sensor_ = s; }
+        void set_boost_remaining_time_sensor(text_sensor::TextSensor* s) { this->boost_remaining_time_sensor_ = s; }
+        void update_boost_remaining_(uint32_t remaining_s);
         void restorePreAwayState_();
 
         void add_hardware_setting(HardwareSettingSelect* setting);
@@ -227,6 +230,9 @@ namespace esphome {
         float pre_away_target_temperature_low_{ NAN };
         climate::ClimateMode pre_away_mode_{ climate::CLIMATE_MODE_OFF };
         bool boost_active_{ false };
+        sensor::Sensor* boost_remaining_sensor_{ nullptr };
+        text_sensor::TextSensor* boost_remaining_time_sensor_{ nullptr };
+        uint32_t boost_start_time_ms_{ 0 };
         float pre_boost_target_temperature_{ NAN };
         float pre_boost_target_temperature_low_{ NAN };
         float pre_boost_target_temperature_high_{ NAN };

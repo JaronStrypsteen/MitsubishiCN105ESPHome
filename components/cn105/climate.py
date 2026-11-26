@@ -168,6 +168,8 @@ CONF_PACKET_DROP_SENSOR = "packet_drop_sensor"
 CONF_RETRANSMISSION_SENSOR = "retransmission_sensor"
 CONF_LEVEL_SHIFTER_ENABLE_PIN = "level_shifter_enable_pin"
 CONF_NATIVE_FIVE_SPEED_FAN = "native_five_speed_fan"
+CONF_BOOST_REMAINING_SENSOR = "boost_remaining_sensor"
+CONF_BOOST_REMAINING_TIME_SENSOR = "boost_remaining_time_sensor"
 CONF_HARDWARE_SETTINGS = "hardware_settings"
 CONF_CODE = "code"
 CONF_OPTIONS = "options"
@@ -894,6 +896,17 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_POWER_UNIT_IS_BTU, default=False): cv.boolean,
             cv.Optional(CONF_UART_PORT): cv.int_range(min=0, max=2),
             cv.Optional(CONF_BOOST_DURATION, default="15min"): _positive_time_period,
+            cv.Optional(CONF_BOOST_REMAINING_SENSOR): sensor.sensor_schema(
+                unit_of_measurement=UNIT_SECOND,
+                icon="mdi:timer-sand",
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_DURATION,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_BOOST_REMAINING_TIME_SENSOR): text_sensor.text_sensor_schema(
+                icon="mdi:timer-sand",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
             cv.Optional(
                 CONF_ERROR_CODE_TRANSLATIONS, default={}
             ): ERROR_CODE_TRANSLATIONS_SCHEMA,
@@ -1276,6 +1289,14 @@ def to_code(config):
 
     if CONF_NATIVE_FIVE_SPEED_FAN in config:
         cg.add(var.set_native_five_speed_fan(config[CONF_NATIVE_FIVE_SPEED_FAN]))
+
+    if CONF_BOOST_REMAINING_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_BOOST_REMAINING_SENSOR])
+        cg.add(var.set_boost_remaining_sensor(sensor_var))
+
+    if CONF_BOOST_REMAINING_TIME_SENSOR in config:
+        tsensor_var = yield text_sensor.new_text_sensor(config[CONF_BOOST_REMAINING_TIME_SENSOR])
+        cg.add(var.set_boost_remaining_time_sensor(tsensor_var))
 
     # Set Fahrenheit compatibility mode (cast int to FahrenheitMode enum)
     # The enum validator returns the integer value from FAHRENHEIT_MODES dict

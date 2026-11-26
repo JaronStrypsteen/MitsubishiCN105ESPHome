@@ -344,6 +344,8 @@ void CN105Climate::restorePreBoostState_() {
 
     this->boost_active_ = false;
     this->cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+    this->cancel_interval("boost_countdown");
+    this->update_boost_remaining_(0);
     this->preset = climate::CLIMATE_PRESET_NONE;
 
     if (this->pre_boost_had_custom_fan_ && !this->pre_boost_fan_mode_.empty()) {
@@ -372,6 +374,23 @@ void CN105Climate::restorePreBoostState_() {
     // or checkPendingWantedSettings() will never send it to the indoor unit.
     this->markWantedSettingsPending();
     this->publish_state();
+}
+
+void CN105Climate::update_boost_remaining_(uint32_t remaining_s) {
+    if (this->boost_remaining_sensor_ != nullptr) {
+        this->boost_remaining_sensor_->publish_state(static_cast<float>(remaining_s));
+    }
+    if (this->boost_remaining_time_sensor_ != nullptr) {
+        if (remaining_s == 0) {
+            this->boost_remaining_time_sensor_->publish_state("Inactive");
+        } else {
+            uint32_t mins = remaining_s / 60;
+            uint32_t secs = remaining_s % 60;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%" PRIu32 "m %02" PRIu32 "s", mins, secs);
+            this->boost_remaining_time_sensor_->publish_state(buf);
+        }
+    }
 }
 
 void CN105Climate::restorePreAwayState_() {
@@ -449,6 +468,20 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
         this->set_custom_fan_mode("FULL");
         this->fan_mode.reset();
         this->setFanSpeed("4");
+
+        this->boost_start_time_ms_ = CUSTOM_MILLIS;
+        this->update_boost_remaining_(this->boost_duration_ms_ / 1000);
+        this->set_interval("boost_countdown", 1000, [this]() {
+            if (!this->boost_active_) {
+                this->cancel_interval("boost_countdown");
+                this->update_boost_remaining_(0);
+                return;
+            }
+            uint32_t elapsed_ms = CUSTOM_MILLIS - this->boost_start_time_ms_;
+            uint32_t rem_s = (elapsed_ms < this->boost_duration_ms_) ?
+                ((this->boost_duration_ms_ - elapsed_ms) / 1000) : 0;
+            this->update_boost_remaining_(rem_s);
+        });
 
         this->set_timeout(SCHEDULER_BOOST_TIMEOUT, this->boost_duration_ms_, [this]() {
             ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
