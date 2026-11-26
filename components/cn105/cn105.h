@@ -186,6 +186,7 @@ namespace esphome {
         void update_boost_remaining_(uint32_t remaining_s);
         void set_boost_duration_runtime(uint32_t duration_ms);
         void restart_boost_countdown_();
+        void clearActiveBoost_();
         void restorePreAwayState_();
 
         void add_hardware_setting(HardwareSettingSelect* setting);

@@ -4,22 +4,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cinttypes>
 #include <map>
 #include <vector>
 #include <utility>
 
 using namespace esphome;
-
-namespace {
-void clear_active_boost(CN105Climate& hp) {
-    if (!hp.boost_active_) return;
-    hp.boost_active_ = false;
-    hp.cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
-    hp.cancel_interval("boost_countdown");
-    hp.update_boost_remaining_(0);
-    hp.preset = climate::CLIMATE_PRESET_NONE;
-}
-}  // namespace
 
 
 void CN105Climate::checkPendingWantedSettings() {
@@ -104,7 +94,7 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
     if (target_mode == climate::CLIMATE_MODE_OFF) {
         if (this->boost_active_) {
             ESP_LOGI("preset", "Turning OFF: cancelling active BOOST countdown");
-            clear_active_boost(*this);
+            this->clearActiveBoost_();
         }
         if (this->away_active_) {
             this->away_active_ = false;
@@ -126,7 +116,7 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
         }
     } else if (target_mode == climate::CLIMATE_MODE_OFF && this->coil_drying_enabled_ &&
                (this->mode == climate::CLIMATE_MODE_COOL || this->mode == climate::CLIMATE_MODE_DRY)) {
-        ESP_LOGI("CoilDrying", "Post-cooling anti-mold cycle starting: running fan for %u seconds before power off", this->coil_drying_duration_s_);
+        ESP_LOGI("CoilDrying", "Post-cooling anti-mold cycle starting: running fan for %" PRIu32 " seconds before power off", this->coil_drying_duration_s_);
         this->start_coil_drying_cycle();
         return true;
     }
@@ -144,7 +134,7 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
     const bool updated = this->profile_->process_temperature_change(call);
     if (updated && !call.get_preset().has_value() && this->boost_active_) {
         ESP_LOGI("preset", "Manual temperature change during BOOST: cancelling BOOST timer");
-        clear_active_boost(*this);
+        this->clearActiveBoost_();
     }
     return updated;
 }
@@ -156,7 +146,7 @@ bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
         this->fan_mode.reset();
         this->setFanSpeed("4");
         if (!call.get_preset().has_value() && this->boost_active_) {
-            clear_active_boost(*this);
+            this->clearActiveBoost_();
         }
         return true;
     }
@@ -169,7 +159,7 @@ bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
     this->controlFan();
     if (!call.get_preset().has_value() && this->boost_active_) {
         ESP_LOGI("preset", "Manual fan change during BOOST: cancelling BOOST timer");
-        clear_active_boost(*this);
+        this->clearActiveBoost_();
     }
     return true;
 }
@@ -453,6 +443,15 @@ void CN105Climate::restart_boost_countdown_() {
         ESP_LOGI("preset", "BOOST mode expired, restoring previous settings");
         this->restorePreBoostState_();
     });
+}
+
+void CN105Climate::clearActiveBoost_() {
+    if (!this->boost_active_) return;
+    this->boost_active_ = false;
+    this->cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+    this->cancel_interval("boost_countdown");
+    this->update_boost_remaining_(0);
+    this->preset = climate::CLIMATE_PRESET_NONE;
 }
 
 void CN105Climate::restorePreAwayState_() {
