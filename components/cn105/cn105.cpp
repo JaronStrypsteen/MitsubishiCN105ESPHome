@@ -61,6 +61,7 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_BOOST);
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_SLEEP);
         this->traits_.add_supported_preset(climate::CLIMATE_PRESET_ECO);
+        this->traits_.add_supported_preset(climate::CLIMATE_PRESET_AWAY);
     }
 
 
@@ -366,6 +367,10 @@ void CN105Climate::setupUART() {
         this->parent_->get_parity() == uart::UART_CONFIG_PARITY_EVEN &&
         this->parent_->get_stop_bits() == 1) {
         ESP_LOGI(LOG_CONN_TAG, "UART configured as SERIAL_8E1");
+        if (this->level_shifter_enable_pin_ != nullptr) {
+            this->level_shifter_enable_pin_->digital_write(true);
+            ESP_LOGI(LOG_CONN_TAG, "Level shifter enabled via OE pin");
+        }
         this->transition_to_(DriverState::CONNECTING);
         this->parser_.reset();
     } else {
@@ -392,6 +397,9 @@ void CN105Climate::setHeatpumpConnected(bool state) {
 }
 void CN105Climate::disconnectUART() {
     ESP_LOGD(TAG, "disconnectUART()");
+    if (this->level_shifter_enable_pin_ != nullptr) {
+        this->level_shifter_enable_pin_->digital_write(false);
+    }
     this->uart_setup_switch = false;
     this->setHeatpumpConnected(false);
     // Legacy booleans removed — state managed by FSM (setHeatpumpConnected / transition_to_)
@@ -499,6 +507,8 @@ void CN105Climate::force_low_level_uart_reinit() {
     // Fix UART clock source (lower bits may be sensitive)
 #if defined(UART_SCLK_XTAL)
     uart_set_sclk(port, UART_SCLK_XTAL);
+#elif defined(UART_SCLK_DEFAULT)
+    uart_set_sclk(port, UART_SCLK_DEFAULT);
 #elif defined(UART_SCLK_APB)
     uart_set_sclk(port, UART_SCLK_APB);
 #endif
@@ -523,4 +533,25 @@ void CN105Climate::force_low_level_uart_reinit() {
 #else
     // No ESP32: nothing to do
 #endif
+}
+
+void CN105Climate::increment_checksum_errors() {
+    this->checksum_error_count_++;
+    if (this->checksum_error_sensor_ != nullptr) {
+        this->checksum_error_sensor_->publish_state(this->checksum_error_count_);
+    }
+}
+
+void CN105Climate::increment_packet_drops() {
+    this->packet_drop_count_++;
+    if (this->packet_drop_sensor_ != nullptr) {
+        this->packet_drop_sensor_->publish_state(this->packet_drop_count_);
+    }
+}
+
+void CN105Climate::increment_retransmissions() {
+    this->retransmission_count_++;
+    if (this->retransmission_sensor_ != nullptr) {
+        this->retransmission_sensor_->publish_state(this->retransmission_count_);
+    }
 }

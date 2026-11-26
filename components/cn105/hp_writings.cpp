@@ -161,6 +161,7 @@ bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive,
     }
 
     ESP_LOGW(TAG, "could not write as asked, because UART is not connected");
+    this->increment_retransmissions();
     this->reconnectUART();
     ESP_LOGW(TAG, "delaying packet writing because we need to reconnect first...");
     if (!this->enqueue_pending_write_(packet, length, checkIsActive, kind, value)) {

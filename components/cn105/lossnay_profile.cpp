@@ -43,6 +43,10 @@ void LossnayProfile::decode_status() {
     status.compressorFrequency = 0;
     status.inputPower = hp_.convert_input_power_to_W(float((hp_.data[5] << 8) | hp_.data[6]));
     status.kWh = hp_.convert_energy_usage_to_kWh(float((hp_.data[7] << 8) | hp_.data[8]));
+    if (hp_.filter_dirty_sensor_ != nullptr && hp_.parser_.data_length() >= 5) {
+        bool filter_dirty = (hp_.data[4] & 0x01) != 0;
+        hp_.filter_dirty_sensor_->publish_state(filter_dirty);
+    }
     hp_.statusChanged(status);
 }
 

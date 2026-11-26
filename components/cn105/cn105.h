@@ -133,6 +133,25 @@ namespace esphome {
         void set_coil_drying_sensor(binary_sensor::BinarySensor* sensor) { this->coil_drying_sensor_ = sensor; }
         void set_coil_drying_duration(uint32_t seconds) { this->coil_drying_duration_s_ = seconds; }
         void set_coil_drying_enabled(bool enabled) { this->coil_drying_enabled_ = enabled; }
+        void set_coil_drying_fan_speed(const std::string& speed) { this->coil_drying_fan_speed_ = speed; }
+        void set_coil_drying_vane(const std::string& vane) { this->coil_drying_vane_ = vane; }
+
+        void set_timer_mode_sensor(text_sensor::TextSensor* s) { this->timer_mode_sensor_ = s; }
+        void set_on_timer_sensor(sensor::Sensor* s) { this->on_timer_sensor_ = s; }
+        void set_off_timer_sensor(sensor::Sensor* s) { this->off_timer_sensor_ = s; }
+        void set_filter_dirty_sensor(binary_sensor::BinarySensor* s) { this->filter_dirty_sensor_ = s; }
+
+        void set_checksum_error_sensor(sensor::Sensor* s) { this->checksum_error_sensor_ = s; }
+        void set_packet_drop_sensor(sensor::Sensor* s) { this->packet_drop_sensor_ = s; }
+        void set_retransmission_sensor(sensor::Sensor* s) { this->retransmission_sensor_ = s; }
+        void increment_checksum_errors();
+        void increment_packet_drops();
+        void increment_retransmissions();
+
+        void set_level_shifter_enable_pin(GPIOPin* pin) { this->level_shifter_enable_pin_ = pin; }
+        void set_native_five_speed_fan(bool enabled) { this->native_five_speed_fan_ = enabled; }
+        bool is_native_five_speed_fan() const { return this->native_five_speed_fan_; }
+        void restorePreAwayState_();
 
         void add_hardware_setting(HardwareSettingSelect* setting);
         void set_hardware_settings_interval(uint32_t interval_ms) { this->hardware_settings_interval_ms_ = interval_ms; }
@@ -187,9 +206,30 @@ namespace esphome {
         bool coil_drying_enabled_{ true };
         bool is_drying_cycle_{ false };
         uint32_t coil_drying_duration_s_{ 900 };
+        std::string coil_drying_fan_speed_{ "QUIET" };
+        std::string coil_drying_vane_{ "—" };
+        ESPPreferenceObject coil_drying_pref_;
         binary_sensor::BinarySensor* defrost_sensor_{ nullptr };
+        text_sensor::TextSensor* timer_mode_sensor_{ nullptr };
+        sensor::Sensor* on_timer_sensor_{ nullptr };
+        sensor::Sensor* off_timer_sensor_{ nullptr };
+        binary_sensor::BinarySensor* filter_dirty_sensor_{ nullptr };
+        sensor::Sensor* checksum_error_sensor_{ nullptr };
+        sensor::Sensor* packet_drop_sensor_{ nullptr };
+        sensor::Sensor* retransmission_sensor_{ nullptr };
+        uint32_t checksum_error_count_{ 0 };
+        uint32_t packet_drop_count_{ 0 };
+        uint32_t retransmission_count_{ 0 };
+        GPIOPin* level_shifter_enable_pin_{ nullptr };
+        bool native_five_speed_fan_{ false };
+        bool away_active_{ false };
+        float pre_away_target_temperature_{ NAN };
+        float pre_away_target_temperature_low_{ NAN };
+        climate::ClimateMode pre_away_mode_{ climate::CLIMATE_MODE_OFF };
         bool boost_active_{ false };
         float pre_boost_target_temperature_{ NAN };
+        float pre_boost_target_temperature_low_{ NAN };
+        float pre_boost_target_temperature_high_{ NAN };
         std::string pre_boost_fan_mode_{ "" };
         climate::ClimateFanMode pre_boost_std_fan_mode_{ climate::CLIMATE_FAN_AUTO };
         bool pre_boost_had_custom_fan_{ false };

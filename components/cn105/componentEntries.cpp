@@ -24,6 +24,22 @@ void CN105Climate::setup() {
     this->fan_mode = climate::CLIMATE_FAN_OFF;
     this->clear_custom_fan_mode();
     this->swing_mode = climate::CLIMATE_SWING_OFF;
+
+    if (this->level_shifter_enable_pin_ != nullptr) {
+        this->level_shifter_enable_pin_->setup();
+        this->level_shifter_enable_pin_->digital_write(false);
+    }
+
+    this->coil_drying_pref_ = global_preferences->make_preference<bool>(fnv1_hash("cn105_coil_drying"));
+    bool was_drying = false;
+    if (this->coil_drying_pref_.load(&was_drying) && was_drying) {
+        ESP_LOGW("CoilDrying", "Interrupted coil drying cycle detected on reboot; resetting state.");
+        was_drying = false;
+        this->coil_drying_pref_.save(&was_drying);
+        this->mode = climate::CLIMATE_MODE_OFF;
+        this->setPowerSetting("OFF");
+    }
+
     if (this->coil_drying_switch_ != nullptr) {
         this->coil_drying_switch_->publish_state(this->coil_drying_enabled_);
     }

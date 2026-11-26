@@ -101,6 +101,9 @@ void RequestScheduler::send_request(uint8_t code, CN105Climate* context) {
                     if (r.code == code_copy && r.awaiting) {
                         r.awaiting = false;
                         r.failures++;
+                        if (ctx != nullptr) {
+                            ctx->increment_packet_drops();
+                        }
                         ESP_LOGW(LOG_CYCLE_TAG, "Soft timeout for %s (0x%02X), failures: %d",
                             r.description, r.code, r.failures);
                         if (r.failures >= r.maxFailures) {

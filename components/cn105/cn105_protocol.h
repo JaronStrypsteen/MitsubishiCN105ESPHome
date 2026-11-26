@@ -144,8 +144,9 @@ inline int lookup_index(const int valuesMap[], int len, int lookupValue) {
 /// @param lookupValue The string to search for.
 /// @return            Index of the match, or -1 if not found.
 inline int lookup_index(const char* valuesMap[], int len, const char* lookupValue) {
+    if (lookupValue == nullptr) return -1;
     for (int i = 0; i < len; i++) {
-        if (strcasecmp(valuesMap[i], lookupValue) == 0) {
+        if (valuesMap[i] == lookupValue || strcasecmp(valuesMap[i], lookupValue) == 0) {
             return i;
         }
     }
@@ -198,8 +199,9 @@ inline std::optional<int> lookup_index_opt(const int valuesMap[], int len, int l
 /// @param lookupValue The string to search for.
 /// @return            Index of the match, or std::nullopt if not found.
 inline std::optional<int> lookup_index_opt(const char* valuesMap[], int len, const char* lookupValue) {
+    if (lookupValue == nullptr) return std::nullopt;
     for (int i = 0; i < len; i++) {
-        if (strcasecmp(valuesMap[i], lookupValue) == 0) {
+        if (valuesMap[i] == lookupValue || strcasecmp(valuesMap[i], lookupValue) == 0) {
             return i;
         }
     }

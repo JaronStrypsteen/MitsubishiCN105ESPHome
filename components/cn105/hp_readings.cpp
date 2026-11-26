@@ -57,6 +57,7 @@ void CN105Climate::processDataPacket() {
         // timestamp. Only awaited responses, ACKs and handshakes refresh it.
         processCommand();
     } else {
+        this->increment_checksum_errors();
         ESP_LOGW("chkSum", "KO -> checksum mismatch (cmd=0x%02X len=%d received=0x%02X expected=0x%02X)",
             this->parser_.command(), this->parser_.data_length(),
             this->parser_.received_checksum(), this->parser_.expected_checksum());
@@ -150,8 +151,22 @@ bool CN105Climate::getDataFromResponsePacket() {
 
     case 0x05:
         /* timer packet */
-        ESP_LOGW("Decoder", "[0x05 is Timer : not implemented]");
-        //this->last_received_packet_sensor->publish_state("0x62-> 0x05: Data -> Timer Packet");
+        if (this->parser_.data_length() >= 4) {
+            uint8_t mode_byte = this->data[1];
+            const char* mode_str = (mode_byte < 4) ? TIMER_MODE_MAP[mode_byte] : "UNKNOWN";
+            if (this->timer_mode_sensor_ != nullptr) {
+                this->timer_mode_sensor_->publish_state(mode_str);
+            }
+            float on_minutes = static_cast<float>(this->data[2] * TIMER_INCREMENT_MINUTES);
+            if (this->on_timer_sensor_ != nullptr) {
+                this->on_timer_sensor_->publish_state(on_minutes);
+            }
+            float off_minutes = static_cast<float>(this->data[3] * TIMER_INCREMENT_MINUTES);
+            if (this->off_timer_sensor_ != nullptr) {
+                this->off_timer_sensor_->publish_state(off_minutes);
+            }
+            ESP_LOGD("Decoder", "[0x05 Timer: mode=%s, on=%.0fm, off=%.0fm]", mode_str, on_minutes, off_minutes);
+        }
         break;
 
     case 0x06:
@@ -160,7 +175,13 @@ bool CN105Climate::getDataFromResponsePacket() {
         break; // orchestrator
 
     case 0x10:
-        ESP_LOGD("Decoder", "[0x10 is Unknown : not implemented]");
+        if (this->parser_.data_length() >= 2) {
+            bool filter_dirty = (this->data[1] & 0x01) != 0;
+            if (this->filter_dirty_sensor_ != nullptr) {
+                this->filter_dirty_sensor_->publish_state(filter_dirty);
+            }
+            ESP_LOGD("Decoder", "[0x10 Maintenance: filter_dirty=%s]", filter_dirty ? "YES" : "NO");
+        }
         break;
 
     case 0x20: // fallthrough
@@ -208,8 +229,10 @@ void CN105Climate::processCommand() {
         case 0x02: min_len = 15; break;  // settings, up to data[14]
         case 0x03: min_len = 14; break;  // room/OAT/runtime, up to data[13]
         case 0x04: min_len = 6;  break;  // error code, data[4] and data[5]
+        case 0x05: min_len = 4;  break;  // timers, mode and on/off intervals
         case 0x06: min_len = 9;  break;  // status, up to data[8]
         case 0x09: min_len = 6;  break;  // sub-mode, up to data[5]
+        case 0x10: min_len = 2;  break;  // maintenance / filter status
         case 0x20:                   // fallthrough
         case 0x22: min_len = 16; break;  // function settings
         case 0x42: min_len = 4;  break;  // HVAC options, up to data[3]

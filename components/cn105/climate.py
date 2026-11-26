@@ -2,6 +2,7 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome import pins
 from esphome.components.uptime.sensor import UptimeSecondsSensor
 
 from esphome.components import (
@@ -156,6 +157,17 @@ CONF_POWER_SAVING_SWITCH = "power_saving_switch"
 CONF_COIL_DRYING_SWITCH = "coil_drying_switch"
 CONF_COIL_DRYING_SENSOR = "coil_drying_sensor"
 CONF_COIL_DRYING_DURATION = "coil_drying_duration"
+CONF_COIL_DRYING_FAN_SPEED = "coil_drying_fan_speed"
+CONF_COIL_DRYING_VANE = "coil_drying_vane"
+CONF_TIMER_MODE_SENSOR = "timer_mode_sensor"
+CONF_ON_TIMER_SENSOR = "on_timer_sensor"
+CONF_OFF_TIMER_SENSOR = "off_timer_sensor"
+CONF_FILTER_DIRTY_SENSOR = "filter_dirty_sensor"
+CONF_CHECKSUM_ERROR_SENSOR = "checksum_error_sensor"
+CONF_PACKET_DROP_SENSOR = "packet_drop_sensor"
+CONF_RETRANSMISSION_SENSOR = "retransmission_sensor"
+CONF_LEVEL_SHIFTER_ENABLE_PIN = "level_shifter_enable_pin"
+CONF_NATIVE_FIVE_SPEED_FAN = "native_five_speed_fan"
 CONF_HARDWARE_SETTINGS = "hardware_settings"
 CONF_CODE = "code"
 CONF_OPTIONS = "options"
@@ -828,6 +840,52 @@ CONFIG_SCHEMA = (
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
             cv.Optional(CONF_COIL_DRYING_DURATION, default="15min"): cv.positive_time_period_seconds,
+            cv.Optional(CONF_COIL_DRYING_FAN_SPEED, default="QUIET"): cv.string,
+            cv.Optional(CONF_COIL_DRYING_VANE, default="—"): cv.string,
+            cv.Optional(CONF_TIMER_MODE_SENSOR): text_sensor.text_sensor_schema(
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                icon="mdi:timer-outline",
+            ),
+            cv.Optional(CONF_ON_TIMER_SENSOR): sensor.sensor_schema(
+                unit_of_measurement="min",
+                icon="mdi:timer-plus-outline",
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_DURATION,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_OFF_TIMER_SENSOR): sensor.sensor_schema(
+                unit_of_measurement="min",
+                icon="mdi:timer-minus-outline",
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_DURATION,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_FILTER_DIRTY_SENSOR): binary_sensor.binary_sensor_schema(
+                binary_sensor.BinarySensor,
+                icon="mdi:air-filter",
+                device_class="problem",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_CHECKSUM_ERROR_SENSOR): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                icon="mdi:alert-circle-outline",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_PACKET_DROP_SENSOR): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                icon="mdi:transit-connection-variant",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_RETRANSMISSION_SENSOR): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                icon="mdi:repeat",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_LEVEL_SHIFTER_ENABLE_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_NATIVE_FIVE_SPEED_FAN, default=False): cv.boolean,
             cv.Optional(CONF_HARDWARE_SETTINGS): HARDWARE_SETTING_SCHEMA,
             cv.Optional(
                 CONF_REMOTE_TEMPERATURE_CONTROL_SENSOR
@@ -1177,6 +1235,47 @@ def to_code(config):
     if CONF_COIL_DRYING_SENSOR in config:
         sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_COIL_DRYING_SENSOR])
         cg.add(var.set_coil_drying_sensor(sensor_var))
+
+    if CONF_COIL_DRYING_FAN_SPEED in config:
+        cg.add(var.set_coil_drying_fan_speed(config[CONF_COIL_DRYING_FAN_SPEED]))
+
+    if CONF_COIL_DRYING_VANE in config:
+        cg.add(var.set_coil_drying_vane(config[CONF_COIL_DRYING_VANE]))
+
+    if CONF_TIMER_MODE_SENSOR in config:
+        tsensor_var = yield text_sensor.new_text_sensor(config[CONF_TIMER_MODE_SENSOR])
+        cg.add(var.set_timer_mode_sensor(tsensor_var))
+
+    if CONF_ON_TIMER_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_ON_TIMER_SENSOR])
+        cg.add(var.set_on_timer_sensor(sensor_var))
+
+    if CONF_OFF_TIMER_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_OFF_TIMER_SENSOR])
+        cg.add(var.set_off_timer_sensor(sensor_var))
+
+    if CONF_FILTER_DIRTY_SENSOR in config:
+        sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_FILTER_DIRTY_SENSOR])
+        cg.add(var.set_filter_dirty_sensor(sensor_var))
+
+    if CONF_CHECKSUM_ERROR_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_CHECKSUM_ERROR_SENSOR])
+        cg.add(var.set_checksum_error_sensor(sensor_var))
+
+    if CONF_PACKET_DROP_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_PACKET_DROP_SENSOR])
+        cg.add(var.set_packet_drop_sensor(sensor_var))
+
+    if CONF_RETRANSMISSION_SENSOR in config:
+        sensor_var = yield sensor.new_sensor(config[CONF_RETRANSMISSION_SENSOR])
+        cg.add(var.set_retransmission_sensor(sensor_var))
+
+    if CONF_LEVEL_SHIFTER_ENABLE_PIN in config:
+        pin = yield cg.gpio_pin_expression(config[CONF_LEVEL_SHIFTER_ENABLE_PIN])
+        cg.add(var.set_level_shifter_enable_pin(pin))
+
+    if CONF_NATIVE_FIVE_SPEED_FAN in config:
+        cg.add(var.set_native_five_speed_fan(config[CONF_NATIVE_FIVE_SPEED_FAN]))
 
     # Set Fahrenheit compatibility mode (cast int to FahrenheitMode enum)
     # The enum validator returns the integer value from FAHRENHEIT_MODES dict

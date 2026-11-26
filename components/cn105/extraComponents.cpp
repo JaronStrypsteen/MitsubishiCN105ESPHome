@@ -322,14 +322,16 @@ void CN105Climate::set_coil_drying_switch(HVACOptionSwitch* Switch) {
 
 void CN105Climate::start_coil_drying_cycle() {
     this->is_drying_cycle_ = true;
+    bool drying_active = true;
+    this->coil_drying_pref_.save(&drying_active);
     if (this->coil_drying_sensor_ != nullptr) {
         this->coil_drying_sensor_->publish_state(true);
     }
     this->mode = climate::CLIMATE_MODE_FAN_ONLY;
     this->setModeSetting("FAN");
     this->setPowerSetting("ON");
-    this->setFanSpeed("QUIET");
-    this->setVaneSetting("—");
+    this->setFanSpeed(this->coil_drying_fan_speed_.c_str());
+    this->setVaneSetting(this->coil_drying_vane_.c_str());
     this->publish_state();
 
     this->markWantedSettingsPending();
@@ -338,6 +340,8 @@ void CN105Climate::start_coil_drying_cycle() {
     this->set_timeout("coil_drying", this->coil_drying_duration_s_ * 1000, [this]() {
         ESP_LOGI("CoilDrying", "Coil drying anti-mold cycle complete. Powering OFF.");
         this->is_drying_cycle_ = false;
+        bool drying_active = false;
+        this->coil_drying_pref_.save(&drying_active);
         if (this->coil_drying_sensor_ != nullptr) {
             this->coil_drying_sensor_->publish_state(false);
         }
@@ -353,6 +357,8 @@ void CN105Climate::start_coil_drying_cycle() {
 void CN105Climate::cancel_coil_drying_cycle(bool update_state) {
     this->cancel_timeout("coil_drying");
     this->is_drying_cycle_ = false;
+    bool drying_active = false;
+    this->coil_drying_pref_.save(&drying_active);
     if (this->coil_drying_sensor_ != nullptr) {
         this->coil_drying_sensor_->publish_state(false);
     }
