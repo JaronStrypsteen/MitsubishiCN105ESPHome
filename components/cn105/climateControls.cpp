@@ -10,6 +10,17 @@
 
 using namespace esphome;
 
+namespace {
+void clear_active_boost(CN105Climate& hp) {
+    if (!hp.boost_active_) return;
+    hp.boost_active_ = false;
+    hp.cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+    hp.cancel_interval("boost_countdown");
+    hp.update_boost_remaining_(0);
+    hp.preset = climate::CLIMATE_PRESET_NONE;
+}
+}  // namespace
+
 
 void CN105Climate::checkPendingWantedSettings() {
     // Already in-flight — don't log or re-send
@@ -90,6 +101,17 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
     climate::ClimateMode target_mode = *call.get_mode();
     ESP_LOGD("control", "Mode change asked: %d (current mode: %d)", static_cast<int>(target_mode), static_cast<int>(this->mode));
 
+    if (target_mode == climate::CLIMATE_MODE_OFF) {
+        if (this->boost_active_) {
+            ESP_LOGI("preset", "Turning OFF: cancelling active BOOST countdown");
+            clear_active_boost(*this);
+        }
+        if (this->away_active_) {
+            this->away_active_ = false;
+            this->preset = climate::CLIMATE_PRESET_NONE;
+        }
+    }
+
     // Handle coil drying / anti-mold post-cooling interception
     if (this->is_drying_cycle_) {
         if (target_mode == climate::CLIMATE_MODE_OFF) {
@@ -119,7 +141,12 @@ bool CN105Climate::processModeChange(const esphome::climate::ClimateCall& call) 
 }
 
 bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall& call) {
-    return this->profile_->process_temperature_change(call);
+    const bool updated = this->profile_->process_temperature_change(call);
+    if (updated && !call.get_preset().has_value() && this->boost_active_) {
+        ESP_LOGI("preset", "Manual temperature change during BOOST: cancelling BOOST timer");
+        clear_active_boost(*this);
+    }
+    return updated;
 }
 
 bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
@@ -128,6 +155,9 @@ bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
         this->set_custom_fan_mode("FULL");
         this->fan_mode.reset();
         this->setFanSpeed("4");
+        if (!call.get_preset().has_value() && this->boost_active_) {
+            clear_active_boost(*this);
+        }
         return true;
     }
     if (!call.get_fan_mode().has_value()) {
@@ -137,6 +167,10 @@ bool CN105Climate::processFanChange(const esphome::climate::ClimateCall& call) {
     this->clear_custom_fan_mode();
     this->fan_mode = *call.get_fan_mode();
     this->controlFan();
+    if (!call.get_preset().has_value() && this->boost_active_) {
+        ESP_LOGI("preset", "Manual fan change during BOOST: cancelling BOOST timer");
+        clear_active_boost(*this);
+    }
     return true;
 }
 
@@ -398,19 +432,24 @@ void CN105Climate::restorePreAwayState_() {
     this->away_active_ = false;
     ESP_LOGI("preset", "Restoring pre-AWAY mode and setpoint");
 
+    this->mode = this->pre_away_mode_;
+    this->controlMode();
+
     if (this->pre_away_mode_ != climate::CLIMATE_MODE_OFF) {
-        this->mode = this->pre_away_mode_;
-        this->controlMode();
-    }
-    if (cn105_traits_requires_two_point(this->traits_)) {
-        if (!std::isnan(this->pre_away_target_temperature_low_)) {
-            this->setTargetTemperatureLow(this->pre_away_target_temperature_low_);
+        if (cn105_traits_requires_two_point(this->traits_)) {
+            if (!std::isnan(this->pre_away_target_temperature_low_)) {
+                this->setTargetTemperatureLow(this->pre_away_target_temperature_low_);
+            }
+            if (!std::isnan(this->pre_away_target_temperature_high_)) {
+                this->setTargetTemperatureHigh(this->pre_away_target_temperature_high_);
+            }
         }
+        if (!std::isnan(this->pre_away_target_temperature_)) {
+            this->setTargetTemperature(this->pre_away_target_temperature_);
+        }
+        this->controlTemperature();
     }
-    if (!std::isnan(this->pre_away_target_temperature_)) {
-        this->setTargetTemperature(this->pre_away_target_temperature_);
-    }
-    this->controlTemperature();
+    this->save_setpoint_state_();
     this->markWantedSettingsPending();
     this->publish_state();
 }
@@ -438,6 +477,25 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
             } else if (this->fan_mode.has_value()) {
                 this->pre_boost_std_fan_mode_ = this->fan_mode.value();
             }
+        }
+
+        if (this->mode == climate::CLIMATE_MODE_OFF) {
+            if (this->currentSettings.mode != nullptr) {
+                if (std::strcmp(this->currentSettings.mode, "HEAT") == 0) {
+                    this->mode = climate::CLIMATE_MODE_HEAT;
+                } else if (std::strcmp(this->currentSettings.mode, "COOL") == 0) {
+                    this->mode = climate::CLIMATE_MODE_COOL;
+                } else if (std::strcmp(this->currentSettings.mode, "DRY") == 0) {
+                    this->mode = climate::CLIMATE_MODE_DRY;
+                } else if (std::strcmp(this->currentSettings.mode, "FAN") == 0) {
+                    this->mode = climate::CLIMATE_MODE_FAN_ONLY;
+                } else {
+                    this->mode = climate::CLIMATE_MODE_AUTO;
+                }
+            } else {
+                this->mode = climate::CLIMATE_MODE_AUTO;
+            }
+            this->controlMode();
         }
 
         // Force maximum heating in HEAT mode (or maximum cooling in COOL mode)
@@ -503,7 +561,8 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
             this->clear_custom_fan_mode();
             this->fan_mode = climate::CLIMATE_FAN_LOW;
             this->controlFan();
-            if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
+            if (this->night_mode_switch_ != nullptr &&
+                (this->currentRunStates.night_mode == 1 || this->wantedRunStates.night_mode == 1)) {
                 this->wantedRunStates.night_mode = 0;
                 this->markWantedRunStatesPending();
                 this->night_mode_switch_->publish_state(false);
@@ -514,18 +573,20 @@ void CN105Climate::change_preset_(climate::ClimatePreset preset) {
                 this->pre_away_mode_ = this->mode;
                 this->pre_away_target_temperature_ = this->target_temperature;
                 this->pre_away_target_temperature_low_ = this->target_temperature_low;
+                this->pre_away_target_temperature_high_ = this->target_temperature_high;
             }
-            ESP_LOGI("preset", "Activating AWAY mode (10°C / 50°F Freeze Protection)");
+            ESP_LOGI("preset", "Activating AWAY mode (%.1f°C Freeze Protection)", this->away_temperature_);
             this->mode = climate::CLIMATE_MODE_HEAT;
             this->controlMode();
-            this->setTargetTemperature(10.0f);
+            this->setTargetTemperature(this->away_temperature_);
             if (cn105_traits_requires_two_point(this->traits_)) {
-                this->setTargetTemperatureLow(10.0f);
+                this->setTargetTemperatureLow(this->away_temperature_);
             }
             this->controlTemperature();
         } else if (preset == climate::CLIMATE_PRESET_NONE) {
             ESP_LOGI("preset", "Clearing preset");
-            if (this->night_mode_switch_ != nullptr && this->wantedRunStates.night_mode == 1) {
+            if (this->night_mode_switch_ != nullptr &&
+                (this->currentRunStates.night_mode == 1 || this->wantedRunStates.night_mode == 1)) {
                 this->wantedRunStates.night_mode = 0;
                 this->markWantedRunStatesPending();
                 this->night_mode_switch_->publish_state(false);

@@ -459,9 +459,11 @@ void CN105Climate::emulateMutex(const char* retryName, std::function<void()>&& f
     *retry = [this, timeout_name, weak_retry, callback](uint8_t retry_count, uint32_t delay_ms) {
         if (this->wantedSettingsMutex) {
             if (retry_count >= 10) {
+                this->emulate_mutex_pending_ = false;
                 ESP_LOGW(timeout_name.c_str(), "mutex still locked after 10 retries; dropping deferred work");
                 return;
             }
+            this->emulate_mutex_pending_ = true;
             ESP_LOGI(timeout_name.c_str(), "mutex locked, deferring...");
             const uint32_t next_delay_ms = delay_ms + delay_ms / 5;
             if (auto self = weak_retry.lock()) {
@@ -473,6 +475,7 @@ void CN105Climate::emulateMutex(const char* retryName, std::function<void()>&& f
             return;
         }
 
+        this->emulate_mutex_pending_ = false;
         BooleanMutexGuard guard(this->wantedSettingsMutex);
         ESP_LOGD(timeout_name.c_str(), "lock acquired");
         (*callback)();

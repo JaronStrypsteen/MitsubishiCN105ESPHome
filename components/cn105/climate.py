@@ -105,6 +105,92 @@ def _nonempty_string(value):
     return value
 
 
+def _min_update_interval(value):
+    period = cv.update_interval(value)
+    if period.total_milliseconds < 500:
+        raise cv.Invalid("update_interval must be at least 500ms")
+    return period
+
+
+COIL_DRYING_FAN_MAP = {
+    "AUTO": "AUTO",
+    "QUIET": "QUIET",
+    "1": "1",
+    "LOW": "1",
+    "2": "2",
+    "MEDIUM": "2",
+    "3": "3",
+    "MIDDLE": "3",
+    "4": "4",
+    "HIGH": "4",
+}
+
+COIL_DRYING_VANE_MAP = {
+    "AUTO": "AUTO",
+    "↑↑": "↑↑",
+    "UP_MAX": "↑↑",
+    "↑": "↑",
+    "UP": "↑",
+    "—": "—",
+    "CENTER": "—",
+    "MID": "—",
+    "HORIZONTAL": "—",
+    "↓": "↓",
+    "DOWN": "↓",
+    "↓↓": "↓↓",
+    "DOWN_MAX": "↓↓",
+    "SWING": "SWING",
+}
+
+HORIZONTAL_VANE_VALID_OPTIONS = {
+    "←←",
+    "←",
+    "|",
+    "→",
+    "→→",
+    "←→",
+    "SWING",
+    "AIRFLOW CONTROL",
+    "SPLIT",
+    "LEFT_RIGHT",
+    "SPLIT_AIRFLOW",
+}
+
+
+def _coil_drying_fan_speed(value):
+    key = cv.string(value).strip().upper()
+    if key not in COIL_DRYING_FAN_MAP:
+        raise cv.Invalid(
+            f"Invalid coil_drying_fan_speed '{value}'. Allowed: {', '.join(sorted(COIL_DRYING_FAN_MAP))}"
+        )
+    return COIL_DRYING_FAN_MAP[key]
+
+
+def _coil_drying_vane(value):
+    raw = cv.string(value).strip()
+    key = raw.upper()
+    if raw in COIL_DRYING_VANE_MAP:
+        return COIL_DRYING_VANE_MAP[raw]
+    if key in COIL_DRYING_VANE_MAP:
+        return COIL_DRYING_VANE_MAP[key]
+    raise cv.Invalid(
+        f"Invalid coil_drying_vane '{value}'. Allowed: AUTO, ↑↑, ↑, —, ↓, ↓↓, SWING (or UP_MAX, UP, CENTER, DOWN, DOWN_MAX)"
+    )
+
+
+def _horizontal_vane_options(value):
+    items = cv.ensure_list(cv.string)(value)
+    invalid = [item for item in items if item not in HORIZONTAL_VANE_VALID_OPTIONS]
+    if invalid:
+        raise cv.Invalid(
+            "Invalid horizontal_vane_mode option(s): "
+            + ", ".join(invalid)
+            + ". Allowed: "
+            + ", ".join(sorted(HORIZONTAL_VANE_VALID_OPTIONS))
+        )
+    return items
+
+
 def _custom_fan_modes(value):
     """Only FULL is implemented, and BOOST depends on it being advertised."""
     # cv.In was removed from esphome.config_validation in ESPHome 2026.11;
@@ -163,6 +249,8 @@ CONF_TIMER_MODE_SENSOR = "timer_mode_sensor"
 CONF_ON_TIMER_SENSOR = "on_timer_sensor"
 CONF_OFF_TIMER_SENSOR = "off_timer_sensor"
 CONF_FILTER_DIRTY_SENSOR = "filter_dirty_sensor"
+CONF_CONNECTION_SENSOR = "connection_status_sensor"
+CONF_AWAY_TEMPERATURE = "away_temperature"
 CONF_CHECKSUM_ERROR_SENSOR = "checksum_error_sensor"
 CONF_PACKET_DROP_SENSOR = "packet_drop_sensor"
 CONF_RETRANSMISSION_SENSOR = "retransmission_sensor"
@@ -224,7 +312,54 @@ BUILTIN_CAPABILITY_MANIFESTS = {
             "dual_setpoint",
             "hardware_settings_writes",
         ],
-    }
+    },
+    "MSZ-AY35VGKP": {
+        "source": "built-in exact-model",
+        "supported": ["night_mode", "boost", "sleep", "eco", "air_purifier"],
+        "denied": [
+            "isee",
+            "airflow_control",
+            "dual_setpoint",
+        ],
+    },
+    "MSZ-LN25VG2W": {
+        "source": "built-in exact-model",
+        "supported": [
+            "night_mode",
+            "boost",
+            "sleep",
+            "eco",
+            "air_purifier",
+            "isee",
+            "airflow_control",
+            "target_humidity",
+        ],
+        "denied": [],
+    },
+    "MSZ-LN35VGW": {
+        "source": "built-in exact-model",
+        "supported": [
+            "night_mode",
+            "boost",
+            "sleep",
+            "eco",
+            "air_purifier",
+            "isee",
+            "airflow_control",
+            "target_humidity",
+        ],
+        "denied": [],
+    },
+    "MSZ-GE24NA": {
+        "source": "built-in exact-model",
+        "supported": ["boost", "sleep", "eco"],
+        "denied": ["air_purifier", "isee", "airflow_control"],
+    },
+    "MSZ-A24NA": {
+        "source": "built-in exact-model",
+        "supported": ["boost", "sleep", "eco"],
+        "denied": ["air_purifier", "isee", "airflow_control", "dual_setpoint"],
+    },
 }
 
 OPTION_CAPABILITIES = {
@@ -234,6 +369,7 @@ OPTION_CAPABILITIES = {
     CONF_AIRFLOW_CONTROL_SELECT: "airflow_control",
     CONF_TARGET_HUMIDITY_SENSOR: "target_humidity",
     CONF_HARDWARE_SETTINGS: "hardware_settings_writes",
+    CONF_FUNCTIONS_SET_BUTTON: "hardware_settings_writes",
 }
 
 CONF_DEFROST_SENSOR = "defrost_sensor"
@@ -297,6 +433,9 @@ LOSSNAY_UNSUPPORTED_OPTIONS = {
     CONF_POWER_SAVING_SWITCH,
     CONF_COIL_DRYING_SWITCH,
     CONF_COIL_DRYING_SENSOR,
+    CONF_TIMER_MODE_SENSOR,
+    CONF_ON_TIMER_SENSOR,
+    CONF_OFF_TIMER_SENSOR,
     CONF_HARDWARE_SETTINGS,
     CONF_REMOTE_TEMPERATURE_CONTROL_SENSOR,
 }
@@ -660,8 +799,14 @@ def validate_config_dependencies(config):
         )
 
     core_config = getattr(CORE, "config", None)
+    is_esp_idf = (
+        core_config is not None
+        and isinstance(core_config.get("esp32"), dict)
+        and core_config["esp32"].get("framework", {}).get("type") == "esp-idf"
+    )
     if (
         core_config is not None
+        and not is_esp_idf
         and len(core_config.get("uart", [])) > 1
         and CONF_UART_PORT not in config
     ):
@@ -760,6 +905,12 @@ def validate_lossnay_config(config):
     coil_duration = config.get(CONF_COIL_DRYING_DURATION)
     if coil_duration is not None and getattr(coil_duration, "total_seconds", DEFAULT_COIL_DRYING_DURATION_S) != DEFAULT_COIL_DRYING_DURATION_S:
         raise cv.Invalid("lossnay does not support coil drying, so coil_drying_duration cannot be changed")
+    if config.get(CONF_COIL_DRYING_FAN_SPEED, "QUIET") != "QUIET":
+        raise cv.Invalid("lossnay does not support coil drying, so coil_drying_fan_speed cannot be changed")
+    if config.get(CONF_COIL_DRYING_VANE, "—") != "—":
+        raise cv.Invalid("lossnay does not support coil drying, so coil_drying_vane cannot be changed")
+    if config.get(CONF_AWAY_TEMPERATURE, 10.0) != 10.0:
+        raise cv.Invalid("lossnay does not support presets, so away_temperature cannot be changed")
 
     return config
 
@@ -776,7 +927,7 @@ CONFIG_SCHEMA = (
                 "'hardware_uart' options is not supported anymore. Please add a separate UART component with the correct rx and tx pin."
             ),
             # cv.Optional(CONF_HARDWARE_UART, default="UART0"): valid_uart,
-            cv.Optional(CONF_UPDATE_INTERVAL, default="2s"): cv.All(cv.update_interval),
+            cv.Optional(CONF_UPDATE_INTERVAL, default="2s"): _min_update_interval,
             cv.Optional(CONF_HORIZONTAL_SWING_SELECT): SELECT_SCHEMA,
             cv.Optional(CONF_VERTICAL_SWING_SELECT): SELECT_SCHEMA,
             cv.Optional(
@@ -842,8 +993,8 @@ CONFIG_SCHEMA = (
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             ),
             cv.Optional(CONF_COIL_DRYING_DURATION, default="15min"): cv.positive_time_period_seconds,
-            cv.Optional(CONF_COIL_DRYING_FAN_SPEED, default="QUIET"): cv.string,
-            cv.Optional(CONF_COIL_DRYING_VANE, default="—"): cv.string,
+            cv.Optional(CONF_COIL_DRYING_FAN_SPEED, default="QUIET"): _coil_drying_fan_speed,
+            cv.Optional(CONF_COIL_DRYING_VANE, default="—"): _coil_drying_vane,
             cv.Optional(CONF_TIMER_MODE_SENSOR): text_sensor.text_sensor_schema(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
                 icon="mdi:timer-outline",
@@ -867,6 +1018,12 @@ CONFIG_SCHEMA = (
                 icon="mdi:air-filter",
                 device_class="problem",
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            ),
+            cv.Optional(CONF_CONNECTION_SENSOR): binary_sensor.binary_sensor_schema(
+                binary_sensor.BinarySensor,
+                device_class="connectivity",
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                icon="mdi:connection",
             ),
             cv.Optional(CONF_CHECKSUM_ERROR_SENSOR): sensor.sensor_schema(
                 accuracy_decimals=0,
@@ -896,6 +1053,9 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_POWER_UNIT_IS_BTU, default=False): cv.boolean,
             cv.Optional(CONF_UART_PORT): cv.int_range(min=0, max=2),
             cv.Optional(CONF_BOOST_DURATION, default="15min"): _positive_time_period,
+            cv.Optional(CONF_AWAY_TEMPERATURE, default=10.0): cv.All(
+                cv.temperature, cv.float_range(min=10.0, max=25.0)
+            ),
             cv.Optional(CONF_BOOST_REMAINING_SENSOR): sensor.sensor_schema(
                 unit_of_measurement=UNIT_SECOND,
                 icon="mdi:timer-sand",
@@ -930,9 +1090,7 @@ CONFIG_SCHEMA = (
                     ): cv.ensure_list(climate.validate_climate_swing_mode),
                     cv.Optional(CONF_DUAL_SETPOINT, default=False): cv.boolean,
                     cv.Optional(CONF_RESTORE_SETPOINTS, default=False): cv.boolean,
-                    cv.Optional(CONF_SUPPORTS_HORIZONTAL_VANE_MODE): cv.ensure_list(
-                        cv.string
-                    ),
+                    cv.Optional(CONF_SUPPORTS_HORIZONTAL_VANE_MODE): _horizontal_vane_options,
                     cv.Optional(CONF_HORIZONTAL_VANES, default=1): cv.int_range(
                         min=1, max=2
                     ),
@@ -968,15 +1126,6 @@ def to_code(config):
     cg.add(uart_var.set_stop_bits(1))
 
     uart_id_str_for_lookup = str(uart_id_object)
-    core_config = getattr(CORE, "config", None)
-    if (
-        core_config is not None
-        and len(core_config.get("uart", [])) > 1
-        and CONF_UART_PORT not in config
-    ):
-        _LOGGER.warning(
-            "Multiple UARTs configured. Set uart_port explicitly so low-level UART reinit targets the CN105 port."
-        )
     tx_pin, rx_pin = get_uart_pins_from_config(CORE.config, uart_id_str_for_lookup)
     cg.add(var.set_tx_rx_pins(tx_pin, rx_pin))
     if CONF_UART_PORT in config:
@@ -990,6 +1139,7 @@ def to_code(config):
             int(config[CONF_BOOST_DURATION].total_milliseconds)
         )
     )
+    cg.add(var.set_away_temperature(config[CONF_AWAY_TEMPERATURE]))
 
     translations = config.get(CONF_ERROR_CODE_TRANSLATIONS, {})
     if translations:
@@ -1032,9 +1182,6 @@ def to_code(config):
                 continue
             if mode_str in climate.CLIMATE_MODES:
                 cg.add(traits.add_supported_mode(climate.CLIMATE_MODES[mode_str]))
-            # Handle mapping for HA HEAT_COOL -> Mitsu AUTO without replacing the real AUTO
-            if mode_str == "HEAT_COOL" and "HEAT_COOL" in climate.CLIMATE_MODES:
-                cg.add(traits.add_supported_mode(climate.CLIMATE_MODES["HEAT_COOL"]))
 
         # Configure the horizontal vane options
         horizontal_vane_options = supports.get(CONF_SUPPORTS_HORIZONTAL_VANE_MODE, [])
@@ -1203,7 +1350,7 @@ def to_code(config):
     if CONF_FUNCTIONS_SET_CODE in config:
         conf_item = config[CONF_FUNCTIONS_SET_CODE]
         number_var = yield number.new_number(
-            conf_item, min_value=100.0, max_value=128.0, step=1.0
+            conf_item, min_value=101.0, max_value=128.0, step=1.0
         )
         cg.add(var.set_functions_set_code(number_var))
 
@@ -1270,6 +1417,10 @@ def to_code(config):
     if CONF_FILTER_DIRTY_SENSOR in config:
         sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_FILTER_DIRTY_SENSOR])
         cg.add(var.set_filter_dirty_sensor(sensor_var))
+
+    if CONF_CONNECTION_SENSOR in config:
+        sensor_var = yield binary_sensor.new_binary_sensor(config[CONF_CONNECTION_SENSOR])
+        cg.add(var.set_connection_sensor(sensor_var))
 
     if CONF_CHECKSUM_ERROR_SENSOR in config:
         sensor_var = yield sensor.new_sensor(config[CONF_CHECKSUM_ERROR_SENSOR])

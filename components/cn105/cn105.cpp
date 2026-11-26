@@ -67,11 +67,7 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
 
     // state_ is initialized to BOOT in the header
     this->functions = heatpumpFunctions();
-    this->autoUpdate = false;
-    this->firstRun = true;
-    this->externalUpdate = false;
     this->lastSend = 0;
-    this->infoMode = 0;
     this->lastConnectRqTimeMs = 0;
     // currentStatus fields are now default-initialized via heatpumpStatus struct defaults
     this->tx_pin_ = -1;
@@ -92,8 +88,6 @@ CN105Climate::CN105Climate(uart::UARTComponent* uart, bool lossnay) :
     this->power_saving_switch_ = nullptr;
     this->coil_drying_switch_ = nullptr;
     this->coil_drying_sensor_ = nullptr;
-
-    this->powerRequestWithoutResponses = 0;     // power request is not supported by all heatpump #112
 
     this->remote_temp_timeout_ = 4294967295;    // uint32_t max
     this->generateExtraComponents();
@@ -139,14 +133,34 @@ void CN105Climate::registerInfoRequests() {
     r_hvac_opts.onResponse = [this](CN105Climate& self) { (void)self; this->getHVACOptionsFromResponsePacket(); };
     scheduler_.register_request(r_hvac_opts);
 
-    // Placeholders
-    InfoRequest r_error_info("error_info", "Error Info", 0x04, 3, 0);
+    // 0x04 Error info (only poll when error_code_sensor is configured)
+    InfoRequest r_error_info("error_info", "Error Info", 0x04, 3, 500);
+    r_error_info.canSend = [this](const CN105Climate& self) {
+        (void)self;
+        return this->error_code_sensor_ != nullptr;
+    };
     r_error_info.onResponse = [this](CN105Climate& self) { (void)self; this->getErrorInfoFromResponsePacket(); };
     scheduler_.register_request(r_error_info);
 
-    InfoRequest r_timers("timers", "Timers", 0x05, 1, 0);
-    r_timers.disabled = true;
+    // 0x05 Timers (only poll when a timer sensor is configured)
+    InfoRequest r_timers("timers", "Timers", 0x05, 3, 500);
+    r_timers.canSend = [this](const CN105Climate& self) {
+        (void)self;
+        return this->profile_->supports(cn105::ProfileFeature::AUXILIARY_CONTROLS) &&
+               (this->timer_mode_sensor_ != nullptr || this->on_timer_sensor_ != nullptr || this->off_timer_sensor_ != nullptr);
+    };
+    r_timers.onResponse = [this](CN105Climate& self) { (void)self; this->getTimersFromResponsePacket(); };
     scheduler_.register_request(r_timers);
+
+    // 0x10 Maintenance / Filter status (heat pump only; Lossnay reads filter status from 0x06)
+    InfoRequest r_maintenance("maintenance", "Maintenance/Filter", 0x10, 3, 500);
+    r_maintenance.canSend = [this](const CN105Climate& self) {
+        (void)self;
+        return this->profile_->supports(cn105::ProfileFeature::AUXILIARY_CONTROLS) &&
+               this->filter_dirty_sensor_ != nullptr;
+    };
+    r_maintenance.onResponse = [this](CN105Climate& self) { (void)self; this->getMaintenanceFromResponsePacket(); };
+    scheduler_.register_request(r_maintenance);
 
     // Call to the new dedicated method.
     this->registerHardwareSettingsRequests();
@@ -216,8 +230,7 @@ void CN105Climate::registerHardwareSettingsRequests() {
 
 
 void CN105Climate::set_baud_rate(int baud) {
-    this->baud_ = baud;
-    ESP_LOGI(TAG, "setting baud rate to: %d", baud);
+    ESP_LOGW(TAG, "set_baud_rate(%d) is deprecated; configure baud_rate on the uart component instead", baud);
 }
 
 void CN105Climate::set_tx_rx_pins(int tx_pin, int rx_pin) {
@@ -228,10 +241,10 @@ void CN105Climate::set_tx_rx_pins(int tx_pin, int rx_pin) {
 }
 
 void CN105Climate::pingExternalTemperature() {
-    this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
-    this->set_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT, this->remote_temp_timeout_, [this]() {
+    this->cancel_timeout(SCHEDULER_REMOTE_TEMP_TIMEOUT);
+    this->set_timeout(SCHEDULER_REMOTE_TEMP_TIMEOUT, this->remote_temp_timeout_, [this]() {
         ESP_LOGW(LOG_REMOTE_TEMP, "Remote temperature timeout occured, fall back to internal temperature!");
-        this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
+        this->cancel_timeout(SCHEDULER_REMOTE_TEMP_TIMEOUT);
         this->stopRemoteTempKeepAlive();
         // Do not call set_remote_temperature(0) here: it would ping the watchdog
         // again and re-arm this timeout forever.
@@ -243,7 +256,7 @@ void CN105Climate::pingExternalTemperature() {
 void CN105Climate::set_remote_temp_timeout(uint32_t timeout) {
     this->remote_temp_timeout_ = timeout;
     if (timeout == 4294967295) {
-        this->cancel_timeout(SHEDULER_REMOTE_TEMP_TIMEOUT);
+        this->cancel_timeout(SCHEDULER_REMOTE_TEMP_TIMEOUT);
         ESP_LOGI(LOG_REMOTE_TEMP, "set_remote_temp_timeout is set to never.");
     } else {
         //ESP_LOGI(LOG_ACTION_EVT_TAG, "set_remote_temp_timeout is set to %lu", timeout);
@@ -340,13 +353,13 @@ bool CN105Climate::is_operating() {
     return currentStatus.operating;
 }
 bool CN105Climate::is_air_purifier() {
-    return currentRunStates.air_purifier;
+    return currentRunStates.air_purifier > 0;
 }
 bool CN105Climate::is_night_mode() {
-    return currentRunStates.night_mode;
+    return currentRunStates.night_mode > 0;
 }
 bool CN105Climate::is_circulator() {
-    return currentRunStates.circulator;
+    return currentRunStates.circulator > 0;
 }
 bool CN105Climate::is_power_saving() {
     return currentRunStates.power_saving > 0;
@@ -359,9 +372,6 @@ void CN105Climate::setupUART() {
     ESP_LOGI(LOG_CONN_TAG, "setupUART(): baud=%" PRIu32 " tx=%d rx=%d (UART port=%d)", this->parent_->get_baud_rate(), this->tx_pin_, this->rx_pin_, this->uart_port_);
     this->setHeatpumpConnected(false);
     // isUARTConnected_ replaced by state_ (set to CONNECTING after successful config below)
-
-    // just for debugging purpose, a way to use a button i, yaml to trigger a reconnect
-    this->uart_setup_switch = true;
 
     if (this->parent_->get_data_bits() == 8 &&
         this->parent_->get_parity() == uart::UART_CONFIG_PARITY_EVEN &&
@@ -385,6 +395,7 @@ void CN105Climate::setHeatpumpConnected(bool state) {
     } else if (state_ == DriverState::CONNECTED) {
         this->transition_to_(DriverState::DISCONNECTED);
     }
+    publish_binary_if_changed(this->connection_sensor_, state);
     if (this->hp_uptime_connection_sensor_ != nullptr) {
         if (state) {
             this->hp_uptime_connection_sensor_->start();
@@ -400,10 +411,8 @@ void CN105Climate::disconnectUART() {
     if (this->level_shifter_enable_pin_ != nullptr) {
         this->level_shifter_enable_pin_->digital_write(false);
     }
-    this->uart_setup_switch = false;
     this->setHeatpumpConnected(false);
     // Legacy booleans removed — state managed by FSM (setHeatpumpConnected / transition_to_)
-    this->firstRun = true;
     this->publish_state();
 
 }

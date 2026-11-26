@@ -93,6 +93,24 @@ namespace esphome {
     void log_info_uint32(const char* tag, const char* msg, uint32_t value, const char* suffix = "");
     void log_debug_uint32(const char* tag, const char* msg, uint32_t value, const char* suffix = "");
 
+    inline void publish_binary_if_changed(binary_sensor::BinarySensor* sensor, bool value) {
+        if (sensor != nullptr && (!sensor->has_state() || sensor->state != value)) {
+            sensor->publish_state(value);
+        }
+    }
+
+    inline void publish_sensor_if_changed(sensor::Sensor* sensor, float value) {
+        if (sensor != nullptr && (!sensor->has_state() || !cn105_float_equal(sensor->get_raw_state(), value))) {
+            sensor->publish_state(value);
+        }
+    }
+
+    inline void publish_text_if_changed(text_sensor::TextSensor* sensor, const std::string& value) {
+        if (sensor != nullptr && (!sensor->has_state() || sensor->state != value)) {
+            sensor->publish_state(value);
+        }
+    }
+
     class CN105Climate : public climate::Climate, public Component, public esphome::uart::UARTDevice {
 
         //friend class VaneOrientationSelect;
@@ -144,9 +162,17 @@ namespace esphome {
         void set_checksum_error_sensor(sensor::Sensor* s) { this->checksum_error_sensor_ = s; }
         void set_packet_drop_sensor(sensor::Sensor* s) { this->packet_drop_sensor_ = s; }
         void set_retransmission_sensor(sensor::Sensor* s) { this->retransmission_sensor_ = s; }
+        void set_connection_sensor(binary_sensor::BinarySensor* s) { this->connection_sensor_ = s; }
         void increment_checksum_errors();
         void increment_packet_drops();
         void increment_retransmissions();
+
+        unsigned long get_complete_cycles() const { return this->nbCompleteCycles_; }
+        unsigned long get_total_cycles() const { return this->nbCycles_; }
+        unsigned int get_heatpump_connections() const { return this->nbHeatpumpConnections_; }
+        uint32_t get_checksum_errors() const { return this->checksum_error_count_; }
+        uint32_t get_packet_drops() const { return this->packet_drop_count_; }
+        uint32_t get_retransmissions() const { return this->retransmission_count_; }
 
         void set_level_shifter_enable_pin(GPIOPin* pin) { this->level_shifter_enable_pin_ = pin; }
         void set_native_five_speed_fan(bool enabled) { this->native_five_speed_fan_ = enabled; }
@@ -206,17 +232,19 @@ namespace esphome {
         HVACOptionSwitch* power_saving_switch_ = nullptr;
         HVACOptionSwitch* coil_drying_switch_ = nullptr;
         binary_sensor::BinarySensor* coil_drying_sensor_{ nullptr };
-        bool coil_drying_enabled_{ true };
+        bool coil_drying_enabled_{ false };
         bool is_drying_cycle_{ false };
         uint32_t coil_drying_duration_s_{ 900 };
         std::string coil_drying_fan_speed_{ "QUIET" };
         std::string coil_drying_vane_{ "—" };
         ESPPreferenceObject coil_drying_pref_;
+        ESPPreferenceObject coil_drying_enabled_pref_;
         binary_sensor::BinarySensor* defrost_sensor_{ nullptr };
         text_sensor::TextSensor* timer_mode_sensor_{ nullptr };
         sensor::Sensor* on_timer_sensor_{ nullptr };
         sensor::Sensor* off_timer_sensor_{ nullptr };
         binary_sensor::BinarySensor* filter_dirty_sensor_{ nullptr };
+        binary_sensor::BinarySensor* connection_sensor_{ nullptr };
         sensor::Sensor* checksum_error_sensor_{ nullptr };
         sensor::Sensor* packet_drop_sensor_{ nullptr };
         sensor::Sensor* retransmission_sensor_{ nullptr };
@@ -226,8 +254,10 @@ namespace esphome {
         GPIOPin* level_shifter_enable_pin_{ nullptr };
         bool native_five_speed_fan_{ false };
         bool away_active_{ false };
+        float away_temperature_{ 10.0f };
         float pre_away_target_temperature_{ NAN };
         float pre_away_target_temperature_low_{ NAN };
+        float pre_away_target_temperature_high_{ NAN };
         climate::ClimateMode pre_away_mode_{ climate::CLIMATE_MODE_OFF };
         bool boost_active_{ false };
         sensor::Sensor* boost_remaining_sensor_{ nullptr };
@@ -307,11 +337,13 @@ namespace esphome {
 
         void setup() override;
         void loop() override;
+        void dump_config() override;
 
         void set_baud_rate(int baud_rate);
         void set_tx_rx_pins(int tx_pin, int rx_pin);
         void set_uart_port(int uart_port) { this->uart_port_ = uart_port; }
         void set_boost_duration(uint32_t duration_ms) { this->boost_duration_ms_ = duration_ms; }
+        void set_away_temperature(float temp) { this->away_temperature_ = temp; }
         void set_error_code_translations(const std::map<uint8_t, std::string>& translations) {
             this->error_code_translations_ = translations;
         }
@@ -423,10 +455,6 @@ namespace esphome {
 
         // Configure the climate object with traits that we support.
 
-
-        /// le bouton de setup de l'UART
-        bool uart_setup_switch;
-
         // Legacy booleans replaced by DriverState FSM (see state_)
         // bool isUARTConnected_  → isUARTReady_()
         // bool isHeatpumpConnected_ → isHeatpumpConnected()
@@ -480,6 +508,8 @@ namespace esphome {
         bool processInput(void);
         void processDataPacket();
         void getErrorInfoFromResponsePacket();
+        void getTimersFromResponsePacket();
+        void getMaintenanceFromResponsePacket();
         // Returns true only when an awaited INFO response completed a cycle step.
         bool getDataFromResponsePacket();
         void getPowerFromResponsePacket(); //NET added
@@ -611,11 +641,9 @@ namespace esphome {
         bool remote_temp_heartbeat_warning_shown_ = false;  // Avoid spamming the warning
         uint32_t debounce_delay_;
 
-        int baud_ = 0;
         int tx_pin_ = -1;
         int rx_pin_ = -1;
 
-        //HardwareSerial* _HardSerial{ nullptr };
         unsigned long lastSend;
         unsigned long lastConnectRqTimeMs;
         unsigned long lastReconnectTimeMs;
@@ -628,28 +656,25 @@ namespace esphome {
         heatpumpFunctions functions;
 
         bool use_msz_a24na_setpoint_table_ = false;
-        bool autoUpdate;
-        bool firstRun;
-        int infoMode;
-        bool externalUpdate;
 
         // counter for status request for checking heatpump is still connected
         // is the counter > MAX_NON_RESPONSE_REQ then we conclude uart is not connected anymore
         int nonResponseCounter = 0;
-
-        int powerRequestWithoutResponses = 0;
-
-        bool isReading = false;
-        bool isWriting = false;
 
         // foundStart, bytesRead, dataLength, command → moved into parser_ (Phase 3A)
 
         // Bounded FIFO for deferred writes: no stack-buffer capture and no
         // single-slot loss when two commands arrive during a reconnect.
         void try_write_pending_packet();
+        void send_pending_functions_part2_();
         PendingWrite pending_writes_[MAX_PENDING_WRITES]{};
         uint8_t pending_write_count_ = 0;
+        uint8_t pending_functions_part2_packet_[PACKET_LEN]{};
+        bool has_pending_functions_part2_{ false };
         uint32_t boost_duration_ms_{ 15U * 60U * 1000U };
+#ifndef USE_ESP32
+        bool emulate_mutex_pending_{ false };
+#endif
 
         std::map<uint8_t, std::string> error_code_translations_;
         std::string model_name_;
@@ -670,7 +695,6 @@ namespace esphome {
 
         bool power_unit_is_btu_{ false };  // true = la PAC envoie en BTU/s (conversion ×3600/1055.056 ≈ ×3.412)
         bool supports_dual_setpoint_ = false;
-        int horizontal_vanes_{ 1 }; // Kept for legacy logging if needed, or can be removed if unused.
         VaneType vane_type_{ VaneType::STANDARD };
 
         // --- HEAT_COOL setpoint persistence (opt-in via supports.restore_setpoints) ---

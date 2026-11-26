@@ -162,7 +162,12 @@ bool CN105Climate::writePacket(uint8_t* packet, int length, bool checkIsActive,
 
     ESP_LOGW(TAG, "could not write as asked, because UART is not connected");
     this->increment_retransmissions();
-    this->reconnectUART();
+    if (this->state_ != DriverState::CONNECTING &&
+        (CUSTOM_MILLIS - this->lastReconnectTimeMs) >= this->update_interval_) {
+        this->reconnectUART();
+    } else {
+        ESP_LOGD(TAG, "Connection/handshake already in progress; keeping handshake intact");
+    }
     ESP_LOGW(TAG, "delaying packet writing because we need to reconnect first...");
     if (!this->enqueue_pending_write_(packet, length, checkIsActive, kind, value)) {
         return false;
@@ -213,14 +218,18 @@ void CN105Climate::try_write_pending_packet() {
     PendingWrite entry{};
     if (!this->dequeue_pending_write_(entry)) return;
 
-    if (!this->isUARTReady_()) {
+    const bool ready = this->isUARTReady_() && (!entry.check_is_active || this->isHeatpumpConnectionActive());
+    if (!ready) {
         // Put it back at the front so queue order is preserved.
         for (uint8_t i = this->pending_write_count_; i > 0; --i) {
             this->pending_writes_[i] = this->pending_writes_[i - 1];
         }
         this->pending_writes_[0] = entry;
         ++this->pending_write_count_;
-        this->reconnectUART();
+        if (this->state_ != DriverState::CONNECTING &&
+            (CUSTOM_MILLIS - this->lastReconnectTimeMs) >= this->update_interval_) {
+            this->reconnectUART();
+        }
         this->set_timeout("write", 2000, [this]() { this->try_write_pending_packet(); });
         return;
     }
@@ -288,25 +297,22 @@ const char* CN105Climate::getAirflowControlSetting() {
     }
 }
 bool CN105Climate::getAirPurifierRunState() {
-    if (this->wantedRunStates.air_purifier != this->currentRunStates.air_purifier) {
-        return this->wantedRunStates.air_purifier;
-    } else {
-        return this->currentRunStates.air_purifier;
-    }
+    const int8_t val = (this->wantedRunStates.air_purifier > -1)
+        ? this->wantedRunStates.air_purifier
+        : this->currentRunStates.air_purifier;
+    return val > 0;
 }
 bool CN105Climate::getNightModeRunState() {
-    if (this->wantedRunStates.night_mode != this->currentRunStates.night_mode) {
-        return this->wantedRunStates.night_mode;
-    } else {
-        return this->currentRunStates.night_mode;
-    }
+    const int8_t val = (this->wantedRunStates.night_mode > -1)
+        ? this->wantedRunStates.night_mode
+        : this->currentRunStates.night_mode;
+    return val > 0;
 }
 bool CN105Climate::getCirculatorRunState() {
-    if (this->wantedRunStates.circulator != this->currentRunStates.circulator) {
-        return this->wantedRunStates.circulator;
-    } else {
-        return this->currentRunStates.circulator;
-    }
+    const int8_t val = (this->wantedRunStates.circulator > -1)
+        ? this->wantedRunStates.circulator
+        : this->currentRunStates.circulator;
+    return val > 0;
 }
 
 
@@ -365,8 +371,9 @@ void CN105Climate::sendWantedSettings() {
             std::lock_guard<std::mutex> guard(wantedSettingsMutex);
             this->sendWantedSettingsDelegate();
 #else
-            this->emulateMutex("WRITE_SETTINGS", std::bind(&CN105Climate::sendWantedSettingsDelegate, this));
-
+            if (!this->emulate_mutex_pending_) {
+                this->emulateMutex("WRITE_SETTINGS", std::bind(&CN105Climate::sendWantedSettingsDelegate, this));
+            }
 #endif
 
         } else {
@@ -382,13 +389,13 @@ void CN105Climate::buildAndSendRequestPacket(int packetType) {
     // Map legacy indices to real codes and delegate to buildAndSendInfoPacket.
     uint8_t code = 0x02; // default to settings
     switch (packetType) {
-    case 0: code = 0x02; break; // RQST_PKT_SETTINGS
-    case 1: code = 0x03; break; // RQST_PKT_ROOM_TEMP
-    case 2: code = 0x04; break; // RQST_PKT_UNKNOWN
-    case 3: code = 0x05; break; // RQST_PKT_TIMERS
-    case 4: code = 0x06; break; // RQST_PKT_STATUS
-    case 5: code = 0x09; break; // RQST_PKT_STANDBY
-    case 6: code = 0x42; break; // RQST_PKT_HVAC_OPTIONS
+    case 0: code = 0x02; break; // Settings
+    case 1: code = 0x03; break; // Room temp
+    case 2: code = 0x04; break; // Error info
+    case 3: code = 0x05; break; // Timers
+    case 4: code = 0x06; break; // Status
+    case 5: code = 0x09; break; // Standby / Sub-mode
+    case 6: code = 0x42; break; // HVAC options
     default: code = 0x02; break;
     }
     this->buildAndSendInfoPacket(code);

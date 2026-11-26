@@ -30,7 +30,8 @@ void CN105Climate::setup() {
         this->level_shifter_enable_pin_->digital_write(false);
     }
 
-    this->coil_drying_pref_ = global_preferences->make_preference<bool>(fnv1_hash("cn105_coil_drying"));
+    this->coil_drying_pref_ = global_preferences->make_preference<bool>(
+        this->get_object_id_hash() ^ fnv1_hash("cn105_coil_drying"));
     bool was_drying = false;
     if (this->coil_drying_pref_.load(&was_drying) && was_drying) {
         ESP_LOGW("CoilDrying", "Interrupted coil drying cycle detected on reboot; resetting state.");
@@ -41,10 +42,19 @@ void CN105Climate::setup() {
     }
 
     if (this->coil_drying_switch_ != nullptr) {
+        this->coil_drying_enabled_pref_ = global_preferences->make_preference<bool>(
+            this->get_object_id_hash() ^ fnv1_hash("cn105_coil_drying_en"));
+        bool saved_enabled = false;
+        if (this->coil_drying_enabled_pref_.load(&saved_enabled)) {
+            this->coil_drying_enabled_ = saved_enabled;
+        }
         this->coil_drying_switch_->publish_state(this->coil_drying_enabled_);
     }
     if (this->coil_drying_sensor_ != nullptr) {
         this->coil_drying_sensor_->publish_state(false);
+    }
+    if (this->connection_sensor_ != nullptr) {
+        this->connection_sensor_->publish_state(false);
     }
     this->update_boost_remaining_(0);
     this->parser_.reset();
@@ -70,7 +80,9 @@ void CN105Climate::setup() {
     // Initialize the internal flag based on the static configuration provided by YAML/Python
     this->supports_dual_setpoint_ = cn105_traits_requires_two_point(this->traits_);
     ESP_LOGI(TAG, "Dual setpoint support configured: %s", this->supports_dual_setpoint_ ? "YES" : "NO");
-    ESP_LOGI(TAG, "Horizontal vanes configured: %d", this->horizontal_vanes_);
+    const char* vane_type_str = (this->vane_type_ == VaneType::SPLIT_HORIZONTAL) ? "split_horizontal" :
+                                (this->vane_type_ == VaneType::SPLIT_VERTICAL) ? "split_vertical" : "standard";
+    ESP_LOGI(TAG, "Vane type configured: %s", vane_type_str);
     this->log_capability_manifest_();
 
     if (this->night_mode_switch_ != nullptr) {
@@ -93,6 +105,9 @@ void CN105Climate::setup() {
     }
     if (!this->hardware_settings_.empty()) {
         this->warn_if_capability_denied_(ModelCapability::HARDWARE_SETTINGS_WRITES, "hardware_settings");
+    }
+    if (this->Functions_set_button_ != nullptr) {
+        this->warn_if_capability_denied_(ModelCapability::HARDWARE_SETTINGS_WRITES, "functions_set_button");
     }
 
     // Restore a previously-saved HEAT_COOL band (opt-in) before the first settings read,
@@ -140,8 +155,6 @@ void CN105Climate::loop() {
             this->isGetFunctions_ = false;
         } else {
             this->setFunctions(this->functions);
-            // Also request to get function settings from heat pump to update UI with latest values.
-            this->isGetFunctions_ = true;
         }
     } else {
         if (this->loopCycle.isCycleRunning()) {                         // if we are running an update cycle
@@ -241,9 +254,76 @@ void CN105Climate::maybe_start_connection_() {
 
 uint32_t CN105Climate::get_update_interval() const { return this->update_interval_; }
 void CN105Climate::set_update_interval(uint32_t update_interval) {
-    //ESP_LOGD(TAG, "Setting update interval to %lu", update_interval);
     log_debug_uint32(TAG, "Setting update interval to ", update_interval);
-
     this->update_interval_ = update_interval;
-    this->autoUpdate = (update_interval != 0);
+}
+
+void CN105Climate::dump_config() {
+    LOG_CLIMATE("", "CN105 Climate", this);
+    ESP_LOGCONFIG(TAG, "  Protocol Profile: %s (0x%02X)", this->profile_->name(), this->profile_->id());
+    if (!this->model_name_.empty()) {
+        ESP_LOGCONFIG(TAG, "  Model: %s (%s, strict=%s)", this->model_name_.c_str(),
+                      this->capability_source_.c_str(), YESNO(this->strict_capabilities_));
+    }
+    ESP_LOGCONFIG(TAG, "  UART Port: %d (TX: %d, RX: %d)", this->uart_port_, this->tx_pin_, this->rx_pin_);
+    ESP_LOGCONFIG(TAG, "  Update Interval: %" PRIu32 " ms", this->update_interval_);
+    ESP_LOGCONFIG(TAG, "  Debounce Delay: %" PRIu32 " ms", this->debounce_delay_);
+    ESP_LOGCONFIG(TAG, "  Bootstrap Delay: %" PRIu32 " ms", this->conn_bootstrap_delay_ms_);
+    ESP_LOGCONFIG(TAG, "  Installer Mode: %s", YESNO(this->installer_mode_));
+    ESP_LOGCONFIG(TAG, "  Dual Setpoint: %s (restore=%s)",
+                  YESNO(this->supports_dual_setpoint_), YESNO(this->restore_setpoints_));
+    ESP_LOGCONFIG(TAG, "  Native 5-Speed Fan: %s", YESNO(this->native_five_speed_fan_));
+    ESP_LOGCONFIG(TAG, "  Power Unit is BTU: %s", YESNO(this->power_unit_is_btu_));
+    ESP_LOGCONFIG(TAG, "  MSZ-A24NA Setpoint Table: %s", YESNO(this->use_msz_a24na_setpoint_table_));
+    ESP_LOGCONFIG(TAG, "  Boost Duration: %" PRIu32 " ms", this->boost_duration_ms_);
+    ESP_LOGCONFIG(TAG, "  Away Temperature: %.1f C", this->away_temperature_);
+    ESP_LOGCONFIG(TAG, "  Remote Temp Timeout: %" PRIu32 " ms", this->remote_temp_timeout_);
+    ESP_LOGCONFIG(TAG, "  Remote Temp Keep-Alive: %" PRIu32 " ms", this->remote_temp_keepalive_interval_ms_);
+    ESP_LOGCONFIG(TAG, "  Coil Drying: enabled=%s, duration=%" PRIu32 " s, fan=%s, vane=%s",
+                  YESNO(this->coil_drying_enabled_), this->coil_drying_duration_s_,
+                  this->coil_drying_fan_speed_.c_str(), this->coil_drying_vane_.c_str());
+
+    LOG_BINARY_SENSOR("  ", "Connection Status", this->connection_sensor_);
+    LOG_BINARY_SENSOR("  ", "i-See", this->iSee_sensor_);
+    LOG_BINARY_SENSOR("  ", "Defrost", this->defrost_sensor_);
+    LOG_BINARY_SENSOR("  ", "Filter Dirty", this->filter_dirty_sensor_);
+    LOG_BINARY_SENSOR("  ", "Coil Drying Active", this->coil_drying_sensor_);
+    LOG_BINARY_SENSOR("  ", "Remote Temperature Active", this->remote_temp_sensor_);
+
+    LOG_SENSOR("  ", "Compressor Frequency", this->compressor_frequency_sensor_);
+    LOG_SENSOR("  ", "Input Power", this->input_power_sensor_);
+    LOG_SENSOR("  ", "Energy Usage (kWh)", this->kwh_sensor_);
+    LOG_SENSOR("  ", "Runtime Hours", this->runtime_hours_sensor_);
+    LOG_SENSOR("  ", "Outside Air Temperature", this->outside_air_temperature_sensor_);
+    LOG_SENSOR("  ", "Target Humidity", this->target_humidity_sensor_);
+    LOG_SENSOR("  ", "On Timer", this->on_timer_sensor_);
+    LOG_SENSOR("  ", "Off Timer", this->off_timer_sensor_);
+    LOG_SENSOR("  ", "Boost Remaining", this->boost_remaining_sensor_);
+    LOG_SENSOR("  ", "Checksum Errors", this->checksum_error_sensor_);
+    LOG_SENSOR("  ", "Packet Drops", this->packet_drop_sensor_);
+    LOG_SENSOR("  ", "Retransmissions", this->retransmission_sensor_);
+
+    LOG_TEXT_SENSOR("  ", "Stage", this->stage_sensor_);
+    LOG_TEXT_SENSOR("  ", "Sub Mode", this->Sub_mode_sensor_);
+    LOG_TEXT_SENSOR("  ", "Auto Sub Mode", this->Auto_sub_mode_sensor_);
+    LOG_TEXT_SENSOR("  ", "Error Code", this->error_code_sensor_);
+    LOG_TEXT_SENSOR("  ", "Timer Mode", this->timer_mode_sensor_);
+    LOG_TEXT_SENSOR("  ", "Boost Remaining Time", this->boost_remaining_time_sensor_);
+    LOG_TEXT_SENSOR("  ", "Functions", this->Functions_sensor_);
+    LOG_TEXT_SENSOR("  ", "Remote Temp Source Info", this->remote_temp_source_info_sensor_);
+
+    LOG_SELECT("  ", "Vertical Vane", this->vertical_vane_select_);
+    LOG_SELECT("  ", "Horizontal Vane", this->horizontal_vane_select_);
+    LOG_SELECT("  ", "Airflow Control", this->airflow_control_select_);
+
+    LOG_SWITCH("  ", "Air Purifier", this->air_purifier_switch_);
+    LOG_SWITCH("  ", "Night Mode", this->night_mode_switch_);
+    LOG_SWITCH("  ", "Circulator", this->circulator_switch_);
+    LOG_SWITCH("  ", "Power Saving", this->power_saving_switch_);
+    LOG_SWITCH("  ", "Coil Drying", this->coil_drying_switch_);
+
+    LOG_BUTTON("  ", "Functions Get", this->Functions_get_button_);
+    LOG_BUTTON("  ", "Functions Set", this->Functions_set_button_);
+    LOG_NUMBER("  ", "Functions Set Code", this->Functions_set_code_);
+    LOG_NUMBER("  ", "Functions Set Value", this->Functions_set_value_);
 }

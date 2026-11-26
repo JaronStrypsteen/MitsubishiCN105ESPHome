@@ -61,6 +61,7 @@ class HeatPumpProfile final : public Cn105ProtocolProfile {
     void handleDualSetpointLowOnly(float low);
     void handleDualSetpointHighOnly(float high);
     void handleSingleTargetInAutoOrDry(float requested);
+    void updateSwingModeFromVanes(const char* vane, const char* wide_vane);
     void checkVaneSettings(heatpumpSettings& settings, bool updateCurrentSettings = true);
     void checkWideVaneSettings(heatpumpSettings& settings, bool updateCurrentSettings = true);
     void updateExtraSelectComponents(heatpumpSettings& settings);

@@ -115,9 +115,7 @@ void HeatPumpProfile::decode_settings() {
     }
     // --- END OF MODIFIED SECTION ---
 
-    if (hp_.iSee_sensor_ != nullptr) {
-        hp_.iSee_sensor_->publish_state(receivedSettings.iSee);
-    }
+    publish_binary_if_changed(hp_.iSee_sensor_, receivedSettings.iSee);
 
     // --- TARGET HUMIDITY (byte 12 of 0x02 settings packet) ---
     // Some premium models (e.g. MSZ-LN series) store a target humidity
@@ -256,18 +254,17 @@ bool HeatPumpProfile::decode_submode() {
     ESP_LOGD("Decoder", "[Sub Mode  : %s]", receivedSettings.sub_mode);
     ESP_LOGD("Decoder", "[Auto Mode Sub Mode  : %s]", receivedSettings.auto_sub_mode);
 
-    //hp_.heatpumpUpdate(receivedSettings);
-    if (hp_.stage_sensor_ != nullptr) {
-        if (!hp_.currentSettings.stage || strcmp(receivedSettings.stage, hp_.currentSettings.stage) != 0) {
-            hp_.currentSettings.stage = receivedSettings.stage;
+    if (!hp_.currentSettings.stage || strcmp(receivedSettings.stage, hp_.currentSettings.stage) != 0) {
+        hp_.currentSettings.stage = receivedSettings.stage;
+        if (hp_.stage_sensor_ != nullptr) {
             hp_.stage_sensor_->publish_state(receivedSettings.stage);
+        }
 
-            // If using stage as operating fallback, update action immediately when stage changes
-            // and publish to Home Assistant
-            if (hp_.use_stage_for_operating_status_) {
-                this->update_action();
-                climate_changed = true;
-            }
+        // If using stage as operating fallback, update action immediately when stage changes
+        // and publish to Home Assistant
+        if (hp_.use_stage_for_operating_status_) {
+            this->update_action();
+            climate_changed = true;
         }
     }
     if (HeatPumpProtocol::apply_sub_mode(hp_.currentSettings, receivedSettings.sub_mode,
@@ -371,6 +368,21 @@ void HeatPumpProfile::reconcile_power_mode(heatpumpSettings& settings, bool upda
         hp_.supports_dual_setpoint_, updateCurrentSettings);
 }
 
+void HeatPumpProfile::updateSwingModeFromVanes(const char* vane, const char* wide_vane) {
+    const bool v_swing = (vane != nullptr) && (strcmp(vane, "SWING") == 0);
+    const bool h_swing = (wide_vane != nullptr) && (strcmp(wide_vane, "SWING") == 0);
+    if (v_swing && h_swing) {
+        hp_.swing_mode = climate::CLIMATE_SWING_BOTH;
+    } else if (v_swing) {
+        hp_.swing_mode = climate::CLIMATE_SWING_VERTICAL;
+    } else if (h_swing) {
+        hp_.swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
+    } else {
+        hp_.swing_mode = climate::CLIMATE_SWING_OFF;
+    }
+    ESP_LOGD(LOG_SETTINGS_TAG, "Swing mode is: %i", hp_.swing_mode);
+}
+
 void HeatPumpProfile::checkVaneSettings(heatpumpSettings& settings, bool updateCurrentSettings) {
     if (this->shouldIgnoreIncomingVane(settings)) {
         this->updateExtraSelectComponents(settings);
@@ -380,27 +392,11 @@ void HeatPumpProfile::checkVaneSettings(heatpumpSettings& settings, bool updateC
     if (hp_.hasChanged(hp_.currentSettings.vane, settings.vane, "vane")) {
         ESP_LOGI(LOG_SETTINGS_TAG, "vane setting changed");
 
-        //hp_.debugSettings("settings", settings);
-
         if (updateCurrentSettings) {
-            //ESP_LOGD(LOG_SETTINGS_TAG, "updating currentSetting with new value");
             hp_.currentSettings.vane = settings.vane;
         }
 
-        if (strcmp(settings.vane, "SWING") == 0) {
-            if ((hp_.currentSettings.wideVane != nullptr) && (strcmp(hp_.currentSettings.wideVane, "SWING") == 0)) {
-                hp_.swing_mode = climate::CLIMATE_SWING_BOTH;
-            } else {
-                hp_.swing_mode = climate::CLIMATE_SWING_VERTICAL;
-            }
-        } else {
-            if ((hp_.currentSettings.wideVane != nullptr) && (strcmp(hp_.currentSettings.wideVane, "SWING") == 0)) {
-                hp_.swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-            } else {
-                hp_.swing_mode = climate::CLIMATE_SWING_OFF;
-            }
-        }
-        ESP_LOGD(LOG_SETTINGS_TAG, "Swing mode is: %i", hp_.swing_mode);
+        this->updateSwingModeFromVanes(settings.vane, hp_.currentSettings.wideVane);
     }
 
     this->updateExtraSelectComponents(settings);
@@ -422,26 +418,8 @@ void HeatPumpProfile::checkWideVaneSettings(heatpumpSettings& settings, bool upd
             hp_.currentSettings.wideVane = settings.wideVane;
         }
 
-        if (strcmp(settings.wideVane, "SWING") == 0) {
-            if ((hp_.currentSettings.vane != nullptr) && (strcmp(hp_.currentSettings.vane, "SWING") == 0)) {
-                hp_.swing_mode = climate::CLIMATE_SWING_BOTH;
-            } else {
-                hp_.swing_mode = climate::CLIMATE_SWING_HORIZONTAL;
-            }
-        } else {
-            if ((hp_.currentSettings.vane != nullptr) && (strcmp(hp_.currentSettings.vane, "SWING") == 0)) {
-                hp_.swing_mode = climate::CLIMATE_SWING_VERTICAL;
-            } else {
-                hp_.swing_mode = climate::CLIMATE_SWING_OFF;
-            }
-        }
-        ESP_LOGD(TAG, "Swing mode is: %i", hp_.swing_mode);
+        this->updateSwingModeFromVanes(hp_.currentSettings.vane, settings.wideVane);
     }
-
-    /*if (hp_.hasChanged(hp_.van_orientation->state.c_str(), settings.vane, "select vane")) {
-        ESP_LOGI(TAG, "vane setting (extra select component) changed");
-        hp_.van_orientation->publish_state(currentSettings.vane);
-    }*/
 
     this->updateExtraSelectComponents(settings);
 }
@@ -526,15 +504,15 @@ void HeatPumpProfile::apply_wanted_settings() {
         this->reconcile_fan(hp_.wantedSettings, false);
     }
 
-    if (((hp_.wantedSettings.vane != nullptr) || (hp_.wantedSettings.wideVane != nullptr))) {
-        if (hp_.wantedSettings.vane == nullptr) { // to prevent a nullpointer error
-            hp_.wantedSettings.vane = hp_.currentSettings.vane;
-        }
-        if (hp_.wantedSettings.wideVane == nullptr) { // to prevent a nullpointer error
-            hp_.wantedSettings.wideVane = hp_.currentSettings.wideVane;
-        }
+    if (hp_.wantedSettings.vane != nullptr || hp_.wantedSettings.wideVane != nullptr) {
+        const char* effective_vane = hp_.wantedSettings.vane != nullptr ? hp_.wantedSettings.vane : hp_.currentSettings.vane;
+        const char* effective_wide = hp_.wantedSettings.wideVane != nullptr ? hp_.wantedSettings.wideVane : hp_.currentSettings.wideVane;
+        this->updateSwingModeFromVanes(effective_vane, effective_wide);
 
-        this->checkVaneSettings(hp_.wantedSettings, false);
+        heatpumpSettings preview{};
+        preview.vane = effective_vane;
+        preview.wideVane = effective_wide;
+        this->updateExtraSelectComponents(preview);
     }
 
     // HA Temp — only update if this SET includes an explicit temperature change;
@@ -1175,7 +1153,9 @@ void HeatPumpProfile::reconcile_fan(heatpumpSettings& settings, bool updateCurre
             hp_.fan_mode = hp_.is_native_five_speed_fan() ? climate::CLIMATE_FAN_MIDDLE : climate::CLIMATE_FAN_HIGH;
             hp_.clear_custom_fan_mode();
         } else if (strcmp(settings.fan, "4") == 0) {
-            if (hp_.is_native_five_speed_fan()) {
+            const bool keep_full = hp_.boost_active_ ||
+                                   (hp_.has_custom_fan_mode() && hp_.get_custom_fan_mode_str() == "FULL");
+            if (hp_.is_native_five_speed_fan() && !keep_full) {
                 hp_.fan_mode = climate::CLIMATE_FAN_HIGH;
                 hp_.clear_custom_fan_mode();
             } else {

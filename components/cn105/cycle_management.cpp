@@ -36,7 +36,7 @@ void cycleManagement::deferCycle() {
 
 }
 void cycleManagement::cycleStarted() {
-    ESP_LOGI(LOG_CYCLE_TAG, "1: Cycle start");
+    ESP_LOGD(LOG_CYCLE_TAG, "1: Cycle start");
     lastCycleStartMs = CUSTOM_MILLIS;
     cycleRunning = true;
 }
@@ -44,14 +44,16 @@ void cycleManagement::cycleStarted() {
 void cycleManagement::cycleEnded(bool timedOut) {
     cycleRunning = false;
 
+    const unsigned long end_ms = CUSTOM_MILLIS;
+
     // signed delta is millis()-rollover safe; > 0 means the deferred timestamp is in the past
-    if ((int32_t)(CUSTOM_MILLIS - lastCompleteCycleMs) > 0) {    // we check this because of defering mecanism
+    if ((int32_t)(end_ms - lastCompleteCycleMs) > 0) {    // we check this because of defering mecanism
         // a complete cycle is done
-        lastCompleteCycleMs = CUSTOM_MILLIS;      // to prevent next inteval from ticking too soon
+        lastCompleteCycleMs = end_ms;      // to prevent next inteval from ticking too soon
     }
 
-    ESP_LOGI(LOG_CYCLE_TAG, "6: Cycle ended in %.1f seconds (with timeout?: %s)",
-        (lastCompleteCycleMs - lastCycleStartMs) / 1000.0, timedOut ? "YES" : " NO");
+    ESP_LOGD(LOG_CYCLE_TAG, "6: Cycle ended in %.1f seconds (with timeout?: %s)",
+        (end_ms - lastCycleStartMs) / 1000.0f, timedOut ? "YES" : " NO");
 
 }
 

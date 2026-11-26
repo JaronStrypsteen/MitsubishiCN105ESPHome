@@ -355,14 +355,15 @@ climate:
 
 #### Climate presets
 
-Non-Lossnay climate entities advertise `NONE`, `BOOST`, `SLEEP`, and `ECO` presets:
+Non-Lossnay climate entities advertise `NONE`, `BOOST`, `SLEEP`, `ECO`, and `AWAY` presets:
 
 | Preset  | Behavior |
 | ------- | -------- |
 | `NONE`  | Clears any active preset. If night mode was enabled by `SLEEP`, it is sent to the indoor unit as OFF. |
-| `BOOST` | Saves the current setpoint and fan mode, switches the fan to `FULL`, and automatically restores the previous state after `boost_duration` (15 minutes by default). Selecting another preset also restores the saved state immediately. |
+| `BOOST` | Saves the current setpoint and fan mode, powers the unit ON if currently `OFF`, forces full capacity + `FULL` fan, and automatically restores the previous state after `boost_duration` (15 minutes by default). Selecting another preset restores the saved state immediately; turning `OFF` or manually overriding fan/temperature cancels the boost timer without reverting your manual change. |
 | `SLEEP` | Selects `QUIET` fan and enables Mitsubishi NIGHT MODE via the same run-state packet used by `night_mode_switch`. |
 | `ECO`   | Selects `LOW` fan and clears NIGHT MODE. |
+| `AWAY`  | Saves the current mode and setpoint, switches to `HEAT` at `away_temperature` (default `10.0 °C` freeze protection), and restores the previous mode (including `OFF`) and setpoint when exiting. |
 
 > [!NOTE]
 > `BOOST` requires the `FULL` custom fan mode. Keep `supports.custom_fan_mode: [FULL]` (the default) if you use presets.
@@ -400,12 +401,32 @@ These options are supported but left out of the short example above. They are us
 
 | Option | Purpose |
 | ------ | ------- |
-| `uart_port` | Explicit controller index (`0`, `1`, or `2`) used by the ESP32 low-level UART reinit. Without it the component infers the index from UART declaration order, which can be wrong. Set it when CN105 is not on the first declared UART. |
+| `uart_port` | Explicit controller index (`0`, `1`, or `2`) used by the ESP32 Arduino low-level UART reinit. Without it the component infers the index from UART declaration order, which can be wrong. Set it when CN105 is not on the first declared UART. |
 | `boost_duration` | How long `BOOST` keeps the `FULL` fan and raised setpoint before restoring the previous state. Default `15min`. Requires `supports.custom_fan_mode: [FULL]` (the default). |
+| `away_temperature` | Target freeze-protection temperature used by the `AWAY` preset (`10.0`–`25.0 °C`). Default `10.0`. |
+| `native_five_speed_fan` | Map indoor units with 5 native fan steps (Quiet + 1..4) so speed `3` maps to `MIDDLE` and speed `4` maps to `HIGH`. Default `false`. |
+| `power_unit_is_btu` | Set to `true` for models (e.g. some `MSZ-LN` firmware) that report raw input power in BTU/s and energy in kBTU instead of Watts and kWh/10. Default `false`. |
+| `level_shifter_enable_pin` | Optional GPIO output pin controlling the OE (output-enable) pin of a bidirectional logic level shifter. |
+| `supports.restore_setpoints` | Persist the synthetic `HEAT_COOL` dual-setpoint band (`mode`, `low`, `high`) to flash across reboots/OTAs. Default `false`. |
 | `error_code_translations` | Map a primary error code (`1`–`127`) to a human-readable string. Bit 7 of the protocol byte is only an availability flag and is stripped before lookup. |
-| `model` | Exact model name, e.g. `MSZ-AY35VGK`. Enables the built-in capability manifest when one exists. |
+| `model` | Exact model name (built-in manifests: `MSZ-AY35VGK`, `MSZ-AY35VGKP`, `MSZ-LN25VG2W`, `MSZ-LN35VGW`, `MSZ-GE24NA`, `MSZ-A24NA`). |
 | `capabilities` | Optional exact-model override with `supported`/`denied` lists and a `source` label. Requires `model`. |
 | `strict_capabilities` | Reject configuration that enables a denied capability. Default `false` (runtime warning only). Requires `model`. |
+
+#### Additional optional switches & diagnostic sensors
+
+| Option | Type | Purpose |
+| ------ | ---- | ------- |
+| `power_saving_switch` | `switch` | Controls Econo Cool / Power Saving mode (byte 13 of `0x02` / `0x08` run-state packet). |
+| `coil_drying_switch` | `switch` | Enables/disables an automatic post-cooling fan-only coil-drying cycle when turning `OFF` from `COOL`/`DRY` (defaults to `false`; state persisted per unit). |
+| `coil_drying_sensor` | `binary_sensor` | Indicates whether an anti-mold coil-drying cycle is currently active. |
+| `coil_drying_duration` / `coil_drying_fan_speed` / `coil_drying_vane` | config | Tune coil-drying duration (default `15min`), fan speed (`AUTO`, `QUIET`, `1`–`4` / `LOW`–`HIGH`), and vertical vane (`AUTO`, `↑↑`, `↑`, `—`, `↓`, `↓↓`, `SWING` or `UP_MAX`..`DOWN_MAX`). |
+| `timer_mode_sensor` / `on_timer_sensor` / `off_timer_sensor` | `text_sensor` / `sensor` | Expose hardware `0x05` timer mode (`NONE`, `OFF`, `ON`, `BOTH`) and remaining ON/OFF minutes. |
+| `filter_dirty_sensor` | `binary_sensor` | Exposes dirty-filter maintenance alert (`0x10` on heat pumps, `0x06` on Lossnay). |
+| `connection_status_sensor` | `binary_sensor` | Connectivity diagnostic indicating whether the CN105 handshake is currently `CONNECTED`. |
+| `boost_remaining_sensor` / `boost_remaining_time_sensor` | `sensor` / `text_sensor` | Remaining `BOOST` time in seconds or formatted `Xm YYs`. |
+| `checksum_error_sensor` / `packet_drop_sensor` / `retransmission_sensor` | `sensor` | Monotonic UART protocol health counters. |
+| `remote_temperature_control_sensor` | `binary_sensor` | Confirms whether the unit's reported room temp tracks the active remote temperature within `temperature_margin` (default `0.4 °C`). |
 
 Capability names are `night_mode`, `boost`, `sleep`, `eco`, `air_purifier`, `isee`, `airflow_control`, `target_humidity`, `dual_setpoint`, and `hardware_settings_writes`. Built-in data is exact-model only: evidence from `MSZ-AY35VGKP` is **not** applied to `MSZ-AY35VGK`.
 
@@ -1444,11 +1465,11 @@ Since ESPHome 2026.4.0, a native `mitsubishi_cn105` component (by [@crnjan](http
 | **Connection recovery**    |              Multi-layer: UART reinit fallback for ESP-IDF 5.4.x regressions, auto-reconnect, pending packet queue              |                     State machine with `READ_TIMEOUT` state for retry                      |
 | **Request orchestration**  | `RequestScheduler` — prioritized, round-robin multi-packet cycling (settings, room temp, status, timers, HVAC options, standby) |                     Simple sequential poll: settings → room temp only                      |
 | **Concurrency protection** |                                   Mutex (ESP32) / emulated mutex (ESP8266) on settings writes                                   |                     Single-threaded state machine (no contention risk)                     |
-| **State management**       |                                         Distributed booleans (pragmatic, field-proven)                                          |                  Formal `enum class State` FSM with validated transitions                  |
-| **Frame parsing**          |                                    Inline in main class, overflow-protected (64-byte buffer)                                    |         Encapsulated `FrameParser` class, template callback-based (32-byte buffer)         |
+| **State management**       |                                  Formal `enum class DriverState` FSM (`BOOT`..`DISCONNECTED`)                                  |                  Formal `enum class State` FSM with validated transitions                  |
+| **Frame parsing**          |                                  Encapsulated `cn105_protocol::FrameParser` (64-byte buffer)                                  |         Encapsulated `FrameParser` class, template callback-based (32-byte buffer)         |
 | **Type safety**            |                                     `const char*` parallel arrays (legacy SwiCago pattern)                                      |                    `enum class` + `std::optional` + `constexpr` lookup                     |
 | **Temperature encoding**   |                                                 Dual A/B encoding, auto-detect                                                  |                               Dual A/B encoding, auto-detect                               |
-| **Unit test suite**        |                                                    ❌ (community-validated)                                                     |                                 ✅ Full C++ test coverage                                  |
+| **Unit test suite**        |                             ✅ Standalone C++ GoogleTest suite (`tests/unit/`) + CI compile matrix                              |                                 ✅ Full C++ test coverage                                  |
 | **ESPHome API stability**  |                                        ⚠️ May require updates on ESPHome major releases                                         |                      ✅ Maintained by core team, no breaking changes                       |
 | **Binary size**            |                                             ~5900 lines C++ (all features included)                                             |                            ~700 lines C++ (minimal feature set)                            |
 | **Codebase maturity**      |                                           2+ years, 600+ issues/PRs, active community                                           |                           Released April 2026, rapidly evolving                            |

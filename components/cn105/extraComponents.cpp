@@ -173,7 +173,13 @@ void CN105Climate::set_functions_set_button(FunctionsButton* Button) {
         }
 
         ESP_LOGI(LOG_CYCLE_TAG, "Setting code %i to value %i", this->functions_code_, this->functions_value_);
-        this->functions.setValue(this->functions_code_, this->functions_value_);
+        if (!this->functions.setValue(this->functions_code_, this->functions_value_)) {
+            ESP_LOGW(LOG_FUNCTIONS_TAG, "Invalid or unknown function code %i / value %i", this->functions_code_, this->functions_value_);
+            if (this->Functions_sensor_ != nullptr) {
+                this->Functions_sensor_->publish_state("Invalid function code or value.");
+            }
+            return;
+        }
 
         if (this->Functions_sensor_ != nullptr) {
             this->Functions_sensor_->publish_state("Operation pending, please wait.");
@@ -282,10 +288,14 @@ void CN105Climate::add_hardware_setting(HardwareSettingSelect* setting) {
     setting->setCallbackFunction([this, setting](const std::string& value, int int_value) {
         ESP_LOGI(LOG_FUNCTIONS_TAG, "Hardware setting change: Code %d -> %d (%s)", setting->get_code(), int_value, value.c_str());
 
-        // Optimistic update done in component
-
-        // Update internal structure
-        this->functions.setValue(setting->get_code(), int_value);
+        if (!this->functions.isValid()) {
+            ESP_LOGW(LOG_FUNCTIONS_TAG, "Functions not yet loaded from heat pump; ignoring hardware setting write for code %d", setting->get_code());
+            return;
+        }
+        if (!this->functions.setValue(setting->get_code(), int_value)) {
+            ESP_LOGW(LOG_FUNCTIONS_TAG, "Failed to update function code %d to %d", setting->get_code(), int_value);
+            return;
+        }
 
         // Trigger write to device
         this->isSetFunctions_ = true;
@@ -309,6 +319,7 @@ void CN105Climate::set_coil_drying_switch(HVACOptionSwitch* Switch) {
     this->coil_drying_switch_ = Switch;
     this->coil_drying_switch_->setCallbackFunction([this](bool state) {
         this->coil_drying_enabled_ = state;
+        this->coil_drying_enabled_pref_.save(&state);
         this->coil_drying_switch_->publish_state(state);
         if (!state && this->is_drying_cycle_) {
             this->cancel_coil_drying_cycle(false);
@@ -321,6 +332,17 @@ void CN105Climate::set_coil_drying_switch(HVACOptionSwitch* Switch) {
 }
 
 void CN105Climate::start_coil_drying_cycle() {
+    if (this->boost_active_) {
+        this->boost_active_ = false;
+        this->cancel_timeout(SCHEDULER_BOOST_TIMEOUT);
+        this->cancel_interval("boost_countdown");
+        this->update_boost_remaining_(0);
+        this->preset = climate::CLIMATE_PRESET_NONE;
+    }
+    if (this->away_active_) {
+        this->away_active_ = false;
+        this->preset = climate::CLIMATE_PRESET_NONE;
+    }
     this->is_drying_cycle_ = true;
     bool drying_active = true;
     this->coil_drying_pref_.save(&drying_active);

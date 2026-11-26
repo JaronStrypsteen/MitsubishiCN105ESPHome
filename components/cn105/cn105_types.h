@@ -4,24 +4,24 @@
 #include <cstring>
 #include <string>
 
-#define MAX_DATA_BYTES     64         
-#define MAX_DELAY_RESPONSE_FACTOR 10  
+inline constexpr int MAX_DATA_BYTES = 64;
+inline constexpr int MAX_DELAY_RESPONSE_FACTOR = 10;
 
-static const char* LOG_ACTION_EVT_TAG = "EVT_SETS";
-static const char* TAG = "CN105";
-static const char* LOG_REMOTE_TEMP = "REMOTE_TEMP";
-static const char* LOG_ACK = "ACK";
-static const char* LOG_SETTINGS_TAG = "SETTINGS";
-static const char* LOG_STATUS_TAG = "STATUS";
-static const char* LOG_CYCLE_TAG = "CYCLE";
-static const char* LOG_UPD_INT_TAG = "UPDT_ITVL";
-static const char* LOG_SET_RUN_STATE = "SET_RUN_STATE";
-static const char* LOG_OPERATING_STATUS_TAG = "OPERATING_STATUS";
-static const char* LOG_TEMP_SENSOR_TAG = "TEMP_SENSOR";
-static const char* LOG_DUAL_SP_TAG = "DUAL_SP";
-static const char* LOG_FUNCTIONS_TAG = "FUNCTIONS";
-static const char* LOG_HARDWARE_SELECT_TAG = "HardwareSelect";
-static const char* LOG_CONN_TAG = "CN105_CONN";
+inline constexpr const char* LOG_ACTION_EVT_TAG = "EVT_SETS";
+inline constexpr const char* TAG = "CN105";
+inline constexpr const char* LOG_REMOTE_TEMP = "REMOTE_TEMP";
+inline constexpr const char* LOG_ACK = "ACK";
+inline constexpr const char* LOG_SETTINGS_TAG = "SETTINGS";
+inline constexpr const char* LOG_STATUS_TAG = "STATUS";
+inline constexpr const char* LOG_CYCLE_TAG = "CYCLE";
+inline constexpr const char* LOG_UPD_INT_TAG = "UPDT_ITVL";
+inline constexpr const char* LOG_SET_RUN_STATE = "SET_RUN_STATE";
+inline constexpr const char* LOG_OPERATING_STATUS_TAG = "OPERATING_STATUS";
+inline constexpr const char* LOG_TEMP_SENSOR_TAG = "TEMP_SENSOR";
+inline constexpr const char* LOG_DUAL_SP_TAG = "DUAL_SP";
+inline constexpr const char* LOG_FUNCTIONS_TAG = "FUNCTIONS";
+inline constexpr const char* LOG_HARDWARE_SELECT_TAG = "HardwareSelect";
+inline constexpr const char* LOG_CONN_TAG = "CN105_CONN";
 
 inline bool cn105_float_equal(float lhs, float rhs) {
     return (std::isnan(lhs) && std::isnan(rhs)) || lhs == rhs;
@@ -32,48 +32,30 @@ inline bool cn105_string_equal(const char* lhs, const char* rhs) {
     return std::strcmp(lhs, rhs) == 0;
 }
 
-static const char* SHEDULER_REMOTE_TEMP_TIMEOUT = "->remote_temp_timeout";
-static const char* SCHEDULER_REMOTE_TEMP_KEEPALIVE = "->remote_temp_keepalive";
-static const char* SCHEDULER_BOOST_TIMEOUT = "cn105_boost_timer";
+inline constexpr const char* SCHEDULER_REMOTE_TEMP_TIMEOUT = "->remote_temp_timeout";
+inline constexpr const char* SCHEDULER_REMOTE_TEMP_KEEPALIVE = "->remote_temp_keepalive";
+inline constexpr const char* SCHEDULER_BOOST_TIMEOUT = "cn105_boost_timer";
 
 // Default interval for remote temperature keep-alive (20 seconds, as observed on Kumo)
-static const uint32_t DEFAULT_REMOTE_TEMP_KEEPALIVE_INTERVAL_MS = 20000;
+inline constexpr uint32_t DEFAULT_REMOTE_TEMP_KEEPALIVE_INTERVAL_MS = 20000;
 
-static const int DEFER_SCHEDULE_UPDATE_LOOP_DELAY = 750;
-static const uint32_t RECEIVED_SETPOINT_GRACE_WINDOW_MS = 3000;
-static const uint32_t UI_SETPOINT_ANTIREBOUND_MS = 600;
+inline constexpr int DEFER_SCHEDULE_UPDATE_LOOP_DELAY = 750;
+inline constexpr uint32_t RECEIVED_SETPOINT_GRACE_WINDOW_MS = 3000;
+inline constexpr uint32_t UI_SETPOINT_ANTIREBOUND_MS = 600;
 
-static const int PACKET_LEN = 22;
-static const int PACKET_TYPE_DEFAULT = 99;
+inline constexpr int PACKET_LEN = 22;
+inline constexpr int PACKET_TYPE_DEFAULT = 99;
 
-static const int CONNECT_LEN = 8;
-static const uint8_t CONNECT[CONNECT_LEN] = { 0xfc, 0x5a, 0x01, 0x30, 0x02, 0xca, 0x01, 0xa8 };
-static const uint8_t HEATPUMP_PROFILE = 0x30;
-static const int HEADER_LEN = 8;
-static const uint8_t HEADER[HEADER_LEN] = { 0xfc, 0x41, 0x01, 0x30, 0x10, 0x01, 0x00, 0x00 };
+inline constexpr int CONNECT_LEN = 8;
+inline constexpr uint8_t CONNECT[CONNECT_LEN] = { 0xfc, 0x5a, 0x01, 0x30, 0x02, 0xca, 0x01, 0xa8 };
+inline constexpr uint8_t HEATPUMP_PROFILE = 0x30;
+inline constexpr int HEADER_LEN = 8;
+inline constexpr uint8_t HEADER[HEADER_LEN] = { 0xfc, 0x41, 0x01, 0x30, 0x10, 0x01, 0x00, 0x00 };
 
-static const int INFOHEADER_LEN = 5;
-static const uint8_t INFOHEADER[INFOHEADER_LEN] = { 0xfc, 0x42, 0x01, 0x30, 0x10 };
+inline constexpr int INFOHEADER_LEN = 5;
+inline constexpr uint8_t INFOHEADER[INFOHEADER_LEN] = { 0xfc, 0x42, 0x01, 0x30, 0x10 };
 
-static const int RQST_PKT_SETTINGS = 0;
-static const int RQST_PKT_ROOM_TEMP = 1;
-static const int RQST_PKT_TIMERS = 3;
-static const int RQST_PKT_STATUS = 4;
-static const int RQST_PKT_STANDBY = 5;
-static const int RQST_PKT_UNKNOWN = 2;
-static const int RQST_PKT_HVAC_OPTIONS = 6;
-
-static const int RCVD_PKT_NONE = -1;
-static const int RCVD_PKT_FAIL = 0;
-static const int RCVD_PKT_CONNECT_SUCCESS = 1;
-static const int RCVD_PKT_SETTINGS = 2;
-static const int RCVD_PKT_ROOM_TEMP = 3;
-static const int RCVD_PKT_UPDATE_SUCCESS = 4;
-static const int RCVD_PKT_STATUS = 5;
-static const int RCVD_PKT_TIMER = 6;
-static const int RCVD_PKT_FUNCTIONS = 7;
-
-static const int MAX_NON_RESPONSE_REQ = 5;
+inline constexpr int MAX_NON_RESPONSE_REQ = 5;
 
 static const uint8_t CONTROL_PACKET_1[5] = { 0x01,    0x02,  0x04,  0x08, 0x10 };
 static const uint8_t CONTROL_PACKET_2[1] = { 0x01 };

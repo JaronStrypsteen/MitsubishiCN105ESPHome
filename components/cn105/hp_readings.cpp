@@ -82,14 +82,14 @@ void CN105Climate::getRoomTemperatureFromResponsePacket() {
     // Update the remote temperature control sensor (Issue 290)
     if (this->remote_temp_sensor_ != nullptr) {
         bool is_remote = false;
-        if (this->remote_temp_keepalive_active_ && this->remoteTemperature_ > 0 &&
+        if (this->remoteTemperature_ > 0 &&
             std::isfinite(receivedStatus.roomTemperature) && std::isfinite(this->remoteTemperature_)) {
             float diff = std::fabs(receivedStatus.roomTemperature - this->remoteTemperature_);
             if (diff <= this->remote_temp_margin_) {
                 is_remote = true;
             }
         }
-        this->remote_temp_sensor_->publish_state(is_remote);
+        publish_binary_if_changed(this->remote_temp_sensor_, is_remote);
     }
 
     ESP_LOGD("Decoder", "[Room °C: %f]", receivedStatus.roomTemperature);
@@ -122,9 +122,26 @@ void CN105Climate::getErrorInfoFromResponsePacket() {
         return;
     }
     std::string error = this->profile_->decode_error(this->data);
-    if (!this->error_code_sensor_->has_state() || this->error_code_sensor_->state != error) {
-        this->error_code_sensor_->publish_state(error);
-    }
+    publish_text_if_changed(this->error_code_sensor_, error);
+}
+
+void CN105Climate::getTimersFromResponsePacket() {
+    if (this->parser_.data_length() < 4) return;
+    const uint8_t mode_byte = this->data[1];
+    const char* mode_str = (mode_byte < 4) ? TIMER_MODE_MAP[mode_byte] : "UNKNOWN";
+    publish_text_if_changed(this->timer_mode_sensor_, mode_str);
+    const float on_minutes = static_cast<float>(this->data[2] * TIMER_INCREMENT_MINUTES);
+    publish_sensor_if_changed(this->on_timer_sensor_, on_minutes);
+    const float off_minutes = static_cast<float>(this->data[3] * TIMER_INCREMENT_MINUTES);
+    publish_sensor_if_changed(this->off_timer_sensor_, off_minutes);
+    ESP_LOGD("Decoder", "[0x05 Timer: mode=%s, on=%.0fm, off=%.0fm]", mode_str, on_minutes, off_minutes);
+}
+
+void CN105Climate::getMaintenanceFromResponsePacket() {
+    if (this->parser_.data_length() < 2) return;
+    const bool filter_dirty = (this->data[1] & 0x01) != 0;
+    publish_binary_if_changed(this->filter_dirty_sensor_, filter_dirty);
+    ESP_LOGD("Decoder", "[0x10 Maintenance: filter_dirty=%s]", filter_dirty ? "YES" : "NO");
 }
 
 bool CN105Climate::getDataFromResponsePacket() {
@@ -150,23 +167,7 @@ bool CN105Climate::getDataFromResponsePacket() {
         break; // orchestrator
 
     case 0x05:
-        /* timer packet */
-        if (this->parser_.data_length() >= 4) {
-            uint8_t mode_byte = this->data[1];
-            const char* mode_str = (mode_byte < 4) ? TIMER_MODE_MAP[mode_byte] : "UNKNOWN";
-            if (this->timer_mode_sensor_ != nullptr) {
-                this->timer_mode_sensor_->publish_state(mode_str);
-            }
-            float on_minutes = static_cast<float>(this->data[2] * TIMER_INCREMENT_MINUTES);
-            if (this->on_timer_sensor_ != nullptr) {
-                this->on_timer_sensor_->publish_state(on_minutes);
-            }
-            float off_minutes = static_cast<float>(this->data[3] * TIMER_INCREMENT_MINUTES);
-            if (this->off_timer_sensor_ != nullptr) {
-                this->off_timer_sensor_->publish_state(off_minutes);
-            }
-            ESP_LOGD("Decoder", "[0x05 Timer: mode=%s, on=%.0fm, off=%.0fm]", mode_str, on_minutes, off_minutes);
-        }
+        this->getTimersFromResponsePacket();
         break;
 
     case 0x06:
@@ -175,13 +176,7 @@ bool CN105Climate::getDataFromResponsePacket() {
         break; // orchestrator
 
     case 0x10:
-        if (this->parser_.data_length() >= 2) {
-            bool filter_dirty = (this->data[1] & 0x01) != 0;
-            if (this->filter_dirty_sensor_ != nullptr) {
-                this->filter_dirty_sensor_->publish_state(filter_dirty);
-            }
-            ESP_LOGD("Decoder", "[0x10 Maintenance: filter_dirty=%s]", filter_dirty ? "YES" : "NO");
-        }
+        this->getMaintenanceFromResponsePacket();
         break;
 
     case 0x20: // fallthrough
@@ -202,8 +197,9 @@ bool CN105Climate::getDataFromResponsePacket() {
 
 void CN105Climate::updateSuccess() {
     ESP_LOGD(LOG_ACK, "Last heatpump data update successful!");
-    // nothing can be done here because we have no mean to know wether it is an external temp ack
-    // or a wantedSettings update ack
+    if (this->has_pending_functions_part2_) {
+        this->send_pending_functions_part2_();
+    }
 }
 
 void CN105Climate::processCommand() {
